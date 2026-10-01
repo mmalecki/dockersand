@@ -127,6 +127,11 @@ if [[ "${DOCKERSAND_EGRESS:-}" == 1 ]]; then
   )
 fi
 
+# DOCKERSAND_ENTRYPOINT overrides the image's default entrypoint
+if [[ -n "${DOCKERSAND_ENTRYPOINT:-}" ]]; then
+  sandbox_args+=(--entrypoint "$DOCKERSAND_ENTRYPOINT")
+fi
+
 tty=(-i)
 [[ -t 0 && -t 1 ]] && tty+=(-t)
 

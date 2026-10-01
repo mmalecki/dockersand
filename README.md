@@ -80,6 +80,16 @@ This works best with workflows which end in PRs/branches being pushed to the tar
 and is suitable for running potentially destructive actions on the sandboxed repository. Note that it only
 protects your working copy: the clone keeps your remotes, so with SSH forwarding the sandbox can still push to them.
 
+### Entrypoint override
+
+`DOCKERSAND_ENTRYPOINT` overrides the image's default entrypoint. Any `[args...]` are passed to the new entrypoint:
+
+```sh
+DOCKERSAND_ENTRYPOINT=/bin/bash dockersand <app> -l
+```
+
+This is useful when debugging per-app hooks.
+
 ### SSH forwarding
 
 If `SSH_AUTH_SOCK` is present, it is passed into the Docker container, alongside a `.ssh/known_hosts` mount.
