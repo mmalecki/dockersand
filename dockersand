@@ -62,7 +62,8 @@ if [[ "${DOCKERSAND_CLONE:-}" == 1 ]]; then
   # Untracked directories don't exist in the clone
   [[ -d "$clone/$subdir" ]] || subdir=""
   mount_src="$clone"
-  echo "working in $clone; fetch from it with: git fetch $clone <branch>" >&2
+  echo "working in $clone" >&2
+  echo "fetch from it with: git fetch $clone <branch>" >&2
   echo "never run git inside it on the host: its hooks and config are sandbox-controlled" >&2
 fi
 
