@@ -106,3 +106,10 @@ DOCKERSAND_EGRESS=1 dockersand <app> [args...]
 
 The `squid.conf` file in that directory enables traffic to major inference providers, GitHub, npm and PyPI, but it
 should be adjusted to fit your specific use-case.
+
+## Alternatives
+There are scores of us, dozens even! If you are looking for agent isolation
+in particular, [this gist](https://gist.github.com/wincent/2752d8d97727577050c043e4ff9e386e) has them all.
+
+If you're looking for something even more generic than this, `wc -l dockersand`
+may be enlightening on the build-vs-buy conundrum.
