@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+set -e
+
+# Otherwise docker creates these as root-owned directories
+mkdir -p \
+  "$HOME/.config/opencode" \
+  "$HOME/.local/share/opencode" \
+  "$HOME/.local/state/opencode"
+
+printf '%s\n' \
+  -v "$HOME/.config/opencode:/home/work/.config/opencode" \
+  -v "$HOME/.local/share/opencode:/home/work/.local/share/opencode" \
+  -v "$HOME/.local/state/opencode:/home/work/.local/state/opencode"
