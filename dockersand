@@ -85,6 +85,14 @@ if [[ -f "$HOME/.ssh/known_hosts" ]]; then
   sandbox_args+=(-v "$HOME/.ssh/known_hosts:/home/work/.ssh/known_hosts:ro")
 fi
 
+# Pass git identity via env, as the sandbox has no access to the host's gitconfig
+if git_name="$(git config user.name)"; then
+  sandbox_args+=(-e "GIT_AUTHOR_NAME=$git_name" -e "GIT_COMMITTER_NAME=$git_name")
+fi
+if git_email="$(git config user.email)"; then
+  sandbox_args+=(-e "GIT_AUTHOR_EMAIL=$git_email" -e "GIT_COMMITTER_EMAIL=$git_email")
+fi
+
 # DOCKERSAND_EGRESS=1: no direct network, only allowlisted domains via the
 # proxy from docker-compose.yml
 if [[ "${DOCKERSAND_EGRESS:-}" == 1 ]]; then
