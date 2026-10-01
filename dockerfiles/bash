@@ -1,0 +1,2 @@
+FROM agents
+ENTRYPOINT ["bash"]

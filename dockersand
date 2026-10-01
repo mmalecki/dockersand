@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+app="${1:?usage: dockersand <app> [args...]}"
+shift
+img="$app"
+subdir=""
+
+if repo=$(git rev-parse --show-toplevel 2>/dev/null); then
+  repo_dir="$(basename "$repo")"
+  subdir="$(git rev-parse --show-prefix)"
+  if docker image inspect "$repo_dir-$app" >/dev/null 2>&1; then
+    img="$repo_dir-$app"
+  fi
+else
+  repo="$PWD"
+  repo_dir="$(basename "$repo")"
+fi
+
+# Mounting all of $HOME (or /) read-write would defeat the sandbox
+if [[ "$(realpath "$repo")" == "$(realpath "$HOME")" || "$(realpath "$repo")" == / ]]; then
+  echo "refusing to mount $repo into the sandbox; run from a project directory" >&2
+  exit 1
+fi
+
+echo "launching sandbox image $img..." >&2
+work_dir="/home/work/repos/$repo_dir"
+
+# dockersand-<app> prints one docker arg per line
+sandbox_args=()
+if command -v "dockersand-$app" >/dev/null; then
+  out="$("dockersand-$app")"
+  [[ -n "$out" ]] && mapfile -t sandbox_args <<<"$out"
+fi
+
+# Needs runsc configured with --host-uds=open to connect to host sockets
+if [[ -n "${SSH_AUTH_SOCK:-}" ]]; then
+  sandbox_args+=(-v "$SSH_AUTH_SOCK:/tmp/ssh-agent.sock" -e SSH_AUTH_SOCK=/tmp/ssh-agent.sock)
+fi
+if [[ -f "$HOME/.ssh/known_hosts" ]]; then
+  sandbox_args+=(-v "$HOME/.ssh/known_hosts:/home/work/.ssh/known_hosts:ro")
+fi
+
+# DOCKERSAND_EGRESS=1: no direct network, only allowlisted domains via the
+# proxy from docker-compose.yml
+if [[ "${DOCKERSAND_EGRESS:-}" == 1 ]]; then
+  proxy=dockersand-egress-proxy
+  if [[ "$(docker inspect -f '{{.State.Running}}' "$proxy" 2>/dev/null)" != true ]]; then
+    echo "$proxy is not running; start it with docker compose up -d" >&2
+    exit 1
+  fi
+  # By IP: docker's embedded DNS doesn't resolve container names under runsc
+  proxy_ip="$(docker inspect -f '{{(index .NetworkSettings.Networks "dockersand-internal").IPAddress}}' "$proxy" 2>/dev/null || true)"
+  if [[ -z "$proxy_ip" ]]; then
+    echo "$proxy is not attached to dockersand-internal; recreate it with docker compose up -d --force-recreate" >&2
+    exit 1
+  fi
+  proxy_url="http://$proxy_ip:3128"
+  sandbox_args+=(
+    --network dockersand-internal
+    -e "HTTP_PROXY=$proxy_url" -e "http_proxy=$proxy_url"
+    -e "HTTPS_PROXY=$proxy_url" -e "https_proxy=$proxy_url"
+    -e NO_PROXY=localhost,127.0.0.1 -e no_proxy=localhost,127.0.0.1
+    # ssh ignores HTTP proxies, so tunnel git's ssh through CONNECT
+    -e "GIT_SSH_COMMAND=ssh -o ProxyCommand='nc -X connect -x $proxy_ip:3128 %h %p'"
+  )
+fi
+
+tty=(-i)
+[[ -t 0 && -t 1 ]] && tty+=(-t)
+
+exec docker run --rm \
+  --runtime=runsc \
+  --security-opt no-new-privileges \
+  -v "$repo:$work_dir" \
+  -w "$work_dir/$subdir" \
+  "${sandbox_args[@]}" \
+  "${tty[@]}" \
+  "$img" "$@"

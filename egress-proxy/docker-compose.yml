@@ -1,0 +1,25 @@
+# Egress filtering for sandboxed agents.
+#
+# Agent containers join agents-internal, which has no route out. The proxy
+# sits on both networks and only forwards to domains allowlisted in squid.conf.
+#
+#   docker compose up -d
+#   DOCKERSAND_EGRESS=1 dockersand <app> [args...]
+
+services:
+  agents-egress-proxy:
+    image: ubuntu/squid
+    container_name: agents-egress-proxy
+    restart: unless-stopped
+    volumes:
+      - ./squid.conf:/etc/squid/squid.conf:ro
+    networks:
+      - agents-internal
+      - agents-egress
+
+networks:
+  agents-internal:
+    name: agents-internal
+    internal: true
+  agents-egress:
+    name: agents-egress
