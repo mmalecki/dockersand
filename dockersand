@@ -23,6 +23,49 @@ if [[ "$(realpath "$repo")" == "$(realpath "$HOME")" || "$(realpath "$repo")" ==
   exit 1
 fi
 
+mount_src="$repo"
+
+# DOCKERSAND_CLONE=1: work in a persistent clone instead of the checkout, so
+# host git never reads hooks or config the sandbox wrote. Also works from
+# linked worktrees, whose .git points outside the mount.
+if [[ "${DOCKERSAND_CLONE:-}" == 1 ]]; then
+  if ! git rev-parse --show-toplevel >/dev/null 2>&1; then
+    echo "DOCKERSAND_CLONE=1 needs a git repository" >&2
+    exit 1
+  fi
+  clone_root="${XDG_STATE_HOME:-$HOME/.local/state}/dockersand/clones"
+  clone="$clone_root/$repo_dir-$(printf %s "$(realpath "$repo")" | sha256sum | cut -c1-8)"
+  if [[ ! -d "$clone" ]]; then
+    echo "cloning $repo into $clone..." >&2
+    mkdir -p "$clone_root"
+    tmp="$(mktemp -d "$clone.tmp.XXXXXX")"
+    trap 'rm -rf "$tmp"' EXIT
+    # From the common dir, so this works from linked worktrees too. No
+    # hardlinks: the sandbox could otherwise rewrite objects shared with the
+    # host repo.
+    git clone -q --no-hardlinks --no-checkout \
+      "$(git rev-parse --path-format=absolute --git-common-dir)" "$tmp"
+    if branch="$(git symbolic-ref -q --short HEAD)"; then
+      git -C "$tmp" checkout -q -B "$branch" "$(git rev-parse HEAD)"
+    else
+      git -C "$tmp" checkout -q --detach "$(git rev-parse HEAD)"
+    fi
+    # Swap the host-path origin, unreachable from the sandbox, for the
+    # checkout's own remotes
+    git -C "$tmp" remote remove origin
+    while read -r remote; do
+      git -C "$tmp" remote add "$remote" "$(git remote get-url "$remote")"
+    done < <(git remote)
+    mv "$tmp" "$clone"
+    trap - EXIT
+  fi
+  # Untracked directories don't exist in the clone
+  [[ -d "$clone/$subdir" ]] || subdir=""
+  mount_src="$clone"
+  echo "working in $clone; fetch from it with: git fetch $clone <branch>" >&2
+  echo "never run git inside it on the host: its hooks and config are sandbox-controlled" >&2
+fi
+
 echo "launching sandbox image $img..." >&2
 work_dir="/home/work/repos/$repo_dir"
 
@@ -72,7 +115,7 @@ tty=(-i)
 exec docker run --rm \
   --runtime=runsc \
   --security-opt no-new-privileges \
-  -v "$repo:$work_dir" \
+  -v "$mount_src:$work_dir" \
   -w "$work_dir/$subdir" \
   "${sandbox_args[@]}" \
   "${tty[@]}" \
