@@ -18,11 +18,11 @@ The easiest way to explore the environment this gets you is running `dockersand 
 
 ### Per-repo image
 
-If you launch `dockersand` inside a git repository, it will first check for image named `<repo-name>-<app>`
+If you launch `dockersand` inside a git repository, it will first check for an image named `<repo-name>-<app>`
 (where `repo-name` is the name of the top-level repository directory), before falling back to `<app>`.
 This enables baking custom images per repository, including repository-specific tooling.
 
-### Per-app hook
+### Per-app hooks
 
 `dockersand-*` files are per-app hooks. They are used to pass additional arguments to Docker, allowing mounting
 application-specific configuration directories (such as `~/.config/opencode`).
