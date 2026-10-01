@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -e
+
+# Otherwise docker creates this as a root-owned directory
+mkdir -p "$HOME/.codex"
+
+printf '%s\n' \
+  -v "$HOME/.codex:/home/work/.codex"

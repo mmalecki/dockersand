@@ -1,0 +1,4 @@
+FROM agents
+
+RUN npm install -g @anthropic-ai/claude-code
+ENTRYPOINT ["claude"]

@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+set -e
+
+# Otherwise docker creates these as root-owned directories
+[[ -e "$HOME/.claude.json" ]] || touch "$HOME/.claude.json"
+mkdir -p "$HOME/.claude"
+
+printf '%s\n' \
+  -v "$HOME/.claude.json:/home/work/.claude.json" \
+  -v "$HOME/.claude:/home/work/.claude"
