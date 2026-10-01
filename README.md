@@ -5,6 +5,8 @@ for your trusted-ish workloads, such as well-meaning LLM agents.
 It prevents them from accessing files outside the current project,
 devices and (optionally) network resources.
 
+It's like pocket sand - it certainly won't stop anyone, but it'll definitely maybe slow them down.
+
 ## Installation
 
 For now, manual. Drop every `dockersand*` script on your `PATH`.
