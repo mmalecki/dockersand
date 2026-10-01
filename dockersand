@@ -25,12 +25,21 @@ fi
 
 mount_src="$repo"
 
-# DOCKERSAND_CLONE=1: work in a persistent clone instead of the checkout, so
-# host git never reads hooks or config the sandbox wrote. Also works from
-# linked worktrees, whose .git points outside the mount.
-if [[ "${DOCKERSAND_CLONE:-}" == 1 ]]; then
+# DOCKERSAND_GIT_STRATEGY selects what the sandbox works in:
+#   mount (default): the checkout itself, including its .git
+#   clone: a persistent, wholly separate clone
+git_strategy="${DOCKERSAND_GIT_STRATEGY:-mount}"
+case "$git_strategy" in
+  mount | clone) ;;
+  *)
+    echo "unknown DOCKERSAND_GIT_STRATEGY: $git_strategy (expected mount or clone)" >&2
+    exit 1
+    ;;
+esac
+
+if [[ "$git_strategy" == clone ]]; then
   if ! git rev-parse --show-toplevel >/dev/null 2>&1; then
-    echo "DOCKERSAND_CLONE=1 needs a git repository" >&2
+    echo "DOCKERSAND_GIT_STRATEGY=clone needs a git repository" >&2
     exit 1
   fi
   clone_root="${XDG_STATE_HOME:-$HOME/.local/state}/dockersand/clones"
