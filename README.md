@@ -52,6 +52,12 @@ This enables baking custom images per repository, including repository-specific 
 `dockersand-*` files are per-app hooks. They are used to pass additional arguments to Docker, allowing mounting
 application-specific configuration directories (such as `~/.config/opencode`).
 
+The bundled hooks mount these directories read-write, so, like `.git` with the `mount` git strategy, the sandbox can
+plant code that runs on the host the next time you use that app outside the sandbox: hooks in `~/.claude/settings.json`,
+plugins in `~/.config/opencode`, or MCP server commands in `~/.codex/config.toml`. Unlike `.git`, this isn't limited
+to one repository. If you also run these apps unsandboxed, review changes to their configuration, or edit the hooks to
+mount only what the app needs.
+
 ### Git strategy
 
 `DOCKERSAND_GIT_STRATEGY` selects what the sandbox works in: `mount` (the default) or `clone`.
