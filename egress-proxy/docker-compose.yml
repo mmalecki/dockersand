@@ -12,11 +12,12 @@ services:
     container_name: dockersand-egress-proxy
     restart: unless-stopped
     volumes:
-      - ./squid.conf:/etc/squid/squid.conf:ro
+      - ./squid.permissive.conf:/etc/squid/squid.conf:ro
+      - ./private.acl:/etc/squid/private.acl:ro
     # Stable name for the host, resolved by the proxy. Still denied by
     # squid.conf unless explicitly allowed there.
     extra_hosts:
-      - "host.dockersand.internal:host-gateway"
+      - "host.docker.internal:host-gateway"
     networks:
       - dockersand-internal
       - dockersand-egress

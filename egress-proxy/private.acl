@@ -1,0 +1,12 @@
+# Destinations the sandbox must never reach: the host, LAN, cloud metadata.
+# Shared by squid.conf and squid.permissive.conf. One entry per line.
+0.0.0.0/8
+127.0.0.0/8
+10.0.0.0/8
+100.64.0.0/10
+172.16.0.0/12
+192.168.0.0/16
+169.254.0.0/16
+::1
+fc00::/7
+fe80::/10
