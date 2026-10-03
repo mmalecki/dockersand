@@ -131,7 +131,7 @@ DOCKERSAND_EGRESS=1 dockersand <app> [args...]
 The `squid.conf` file in that directory enables traffic to major inference providers, GitHub, npm and PyPI, but it
 should be adjusted to fit your specific use-case.
 
-It is also possible to allow access to inference provider running on the host by
+It is also possible to allow access to inference provider running on the host, as `host.docker.internal`, by
 uncommenting `http_access allow host_services` rules in `squid.conf`, but
 keep in mind that your host's firewall will treat this traffic like any other,
 so you may need to open up some ports.
