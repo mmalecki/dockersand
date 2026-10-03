@@ -125,6 +125,13 @@ if [[ "${DOCKERSAND_EGRESS:-}" == 1 ]]; then
     # ssh ignores HTTP proxies, so tunnel git's ssh through CONNECT
     -e "GIT_SSH_COMMAND=ssh -o ProxyCommand='nc -X connect -x $proxy_ip:3128 %h %p'"
   )
+else
+  # DOCKERSAND_HOST_GATEWAY names the host inside the sandbox (empty disables).
+  # With egress filtering, the proxy resolves host.docker.internal instead.
+  host_gateway="${DOCKERSAND_HOST_GATEWAY-host.docker.internal}"
+  if [[ -n "$host_gateway" ]]; then
+    sandbox_args+=(--add-host "$host_gateway:host-gateway")
+  fi
 fi
 
 # DOCKERSAND_ENTRYPOINT overrides the image's default entrypoint

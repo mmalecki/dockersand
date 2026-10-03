@@ -102,6 +102,20 @@ To disable SSH forwarding for a single run:
 SSH_AUTH_SOCK= dockersand <app> [args...]
 ```
 
+### Host gateway
+
+Without egress filtering, the host is reachable from the sandbox as `host.docker.internal`, for example to use an
+inference provider running on the host. `DOCKERSAND_HOST_GATEWAY` changes the name; set it empty to omit it:
+
+```sh
+DOCKERSAND_HOST_GATEWAY=host.internal dockersand <app> [args...]
+DOCKERSAND_HOST_GATEWAY= dockersand <app> [args...]
+```
+
+Omitting the name doesn't block access to the host: the sandbox can still reach it by the gateway IP. Only egress
+filtering does that. With `DOCKERSAND_EGRESS=1`, this variable is ignored, as the sandbox reaches the host through
+the proxy (see below).
+
 ### Egress filtering
 
 `DOCKERSAND_EGRESS=1` enables egress filtering by creating the sandbox in a network with no route to the outside, except
