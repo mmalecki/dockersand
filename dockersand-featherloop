@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -e
+
+# Otherwise docker creates these as root-owned directories
+mkdir -p \
+  "$HOME/.config/featherloop" \
+  "$HOME/.local/state/featherloop"
+
+printf '%s\n' \
+  -v "$HOME/.config/featherloop:/home/work/.config/featherloop" \
+  -v "$HOME/.local/state/featherloop:/home/work/.local/state/featherloop" \
+  -e ANTHROPIC_API_KEY
