@@ -117,6 +117,11 @@ DOCKERSAND_EGRESS=1 dockersand <app> [args...]
 The `squid.conf` file in that directory enables traffic to major inference providers, GitHub, npm and PyPI, but it
 should be adjusted to fit your specific use-case.
 
+It is also possible to allow access to inference provider running on the host by
+uncommenting `http_access allow host_services` rules in `squid.conf`, but
+keep in mind that your host's firewall will treat this traffic like any other,
+so you may need to open up some ports.
+
 ## Alternatives
 There are scores of us, dozens even! If you are looking for agent isolation
 in particular, [this gist](https://gist.github.com/wincent/2752d8d97727577050c043e4ff9e386e) has them all.
