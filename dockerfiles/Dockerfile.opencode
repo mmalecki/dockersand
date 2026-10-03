@@ -1,4 +1,4 @@
 FROM agents
 
-RUN npm install -g opencode-ai
+RUN npm install -g @opencode/cli
 ENTRYPOINT ["opencode"]
