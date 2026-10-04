@@ -1,30 +1,67 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Defence in depth: ignore caller's GIT_DIR etc. so discovery starts from PWD
+unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR
+
 app="${1:?usage: dockersand <app> [args...]}"
 shift
 img="$app"
 subdir=""
 sandbox_name=()
 
+# Resolve repo root; verify that it actually owns the git directory.
+# core.worktree in .git/config can redirect --show-toplevel to any host
+# directory. A redirect to a sibling or parent directory would bypass
+# the PWD-prefix check, so we also confirm the git dir matches.
+repo=""
 if repo=$(git rev-parse --show-toplevel 2>/dev/null); then
   repo_dir="$(basename "$repo")"
   subdir="$(git rev-parse --show-prefix)"
+  # Verify: the git dir from PWD must match the git dir from $repo.
+  # If core.worktree redirects to a path without a .git, git -C fails.
+  gd_pwd="$(git rev-parse --absolute-git-dir 2>/dev/null)" || gd_pwd=""
+  gd_repo="$(git -C "$repo" rev-parse --absolute-git-dir 2>/dev/null)" || gd_repo=""
+  if [[ -z "$gd_pwd" || -z "$gd_repo" || "$gd_pwd" != "$gd_repo" ]]; then
+    echo "refusing to mount $repo (toplevel doesn't belong to this git repo)" >&2
+    exit 1
+  fi
+  if [[ ! -d "$repo" ]]; then
+    echo "refusing to mount $repo (not a directory)" >&2
+    exit 1
+  fi
+  # PWD must be under the resolved toplevel
+  rp_pwd="$(realpath "$PWD")"
+  rp_repo="$(realpath "$repo")"
+  if [[ "$rp_pwd" != "$rp_repo" && "$rp_pwd" != "$rp_repo"/* ]]; then
+    echo "refusing to mount $repo (PWD not under toplevel)" >&2
+    exit 1
+  fi
   if docker image inspect "$repo_dir-$app" >/dev/null 2>&1; then
     img="$repo_dir-$app"
   fi
 else
-  repo="$PWD"
+  rp_pwd="$(realpath "$PWD")"
+  rp_repo="$rp_pwd"
+  repo="$rp_pwd"
   repo_dir="$(basename "$repo")"
 fi
 
 # Mounting all of $HOME (or /) read-write would defeat the sandbox
-if [[ "$(realpath "$repo")" == "$(realpath "$HOME")" || "$(realpath "$repo")" == / ]]; then
+rp_home="$(realpath "$HOME")"
+if [[ "$rp_repo" == "$rp_home" || "$rp_repo" == / ]]; then
   echo "refusing to mount $repo into the sandbox; run from a project directory" >&2
   exit 1
 fi
 
-mount_src="$repo"
+# Refuse when $HOME is under $repo (e.g. running from /home would mount
+# every user's home directory).
+if [[ "$rp_home" == "$rp_repo"/* ]]; then
+  echo "refusing to mount $repo into the sandbox; \$HOME is under the repo root" >&2
+  exit 1
+fi
+
+mount_src="$rp_repo"
 mount_dst="/home/work/repos/$repo_dir"
 
 # DOCKERSAND_GIT_STRATEGY selects what the sandbox works in:
@@ -126,11 +163,23 @@ if [[ -f "$HOME/.ssh/known_hosts" ]]; then
   sandbox_args+=(-v "$HOME/.ssh/known_hosts:/home/work/.ssh/known_hosts:ro")
 fi
 
-# Pass git identity via env, as the sandbox has no access to the host's gitconfig
-if git_name="$(git config user.name)"; then
+# Pass git identity via env, as the sandbox has no access to the host's gitconfig.
+# --global --includes respects includeIf/include.path (work/personal identity).
+# Note: per-repo identity is no longer passed through (sandbox can set its own).
+if git_name="$(git config --global --includes user.name 2>/dev/null)"; then
+  :
+elif git_name="$(git config --system user.name 2>/dev/null)"; then
+  :
+fi
+if [[ -n "$git_name" ]]; then
   sandbox_args+=(-e "GIT_AUTHOR_NAME=$git_name" -e "GIT_COMMITTER_NAME=$git_name")
 fi
-if git_email="$(git config user.email)"; then
+if git_email="$(git config --global --includes user.email 2>/dev/null)"; then
+  :
+elif git_email="$(git config --system user.email 2>/dev/null)"; then
+  :
+fi
+if [[ -n "$git_email" ]]; then
   sandbox_args+=(-e "GIT_AUTHOR_EMAIL=$git_email" -e "GIT_COMMITTER_EMAIL=$git_email")
 fi
 
