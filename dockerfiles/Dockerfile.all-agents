@@ -1,2 +1,2 @@
 FROM agents
-RUN npm install -g @anthropic-ai/claude-code @opencode/cli @openai/codex featherloop
+RUN npm install -g @anthropic-ai/claude-code @opencode/cli @openai/codex
