@@ -5,8 +5,21 @@
 10.0.0.0/8
 100.64.0.0/10
 172.16.0.0/12
+192.0.0.0/24
 192.168.0.0/16
 169.254.0.0/16
+# Benchmarking range, used as fake IPs by VPN/TUN proxies that map them to
+# whatever the host can reach
+198.18.0.0/15
+224.0.0.0/4
+240.0.0.0/4
+::
 ::1
 fc00::/7
 fe80::/10
+ff00::/8
+# Translation and tunnelling prefixes can embed any IPv4 address, private
+# ones included
+64:ff9b::/96
+64:ff9b:1::/48
+2002::/16
