@@ -71,7 +71,12 @@ if [[ "$git_strategy" == clone ]]; then
     while read -r remote; do
       git -C "$tmp" remote add "$remote" "$(git remote get-url "$remote")"
     done < <(git remote)
-    mv "$tmp" "$clone"
+    # -T: if a concurrent first run created $clone meanwhile, fail rather
+    # than nest ours inside it, and use theirs
+    if ! mv -T "$tmp" "$clone" 2>/dev/null; then
+      [[ -d "$clone" ]] || { echo "failed to move the clone into $clone" >&2; exit 1; }
+      rm -rf "$tmp"
+    fi
     trap - EXIT
   fi
   # Untracked directories don't exist in the clone
