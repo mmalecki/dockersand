@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+set -e
+
+dockersand-args-claude
+dockersand-args-opencode
+dockersand-args-codex

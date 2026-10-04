@@ -113,8 +113,8 @@ work_dir="/home/work/repos/$repo_dir"
 
 # dockersand-<app> prints one docker arg per line
 sandbox_args=()
-if command -v "dockersand-$app" >/dev/null; then
-  out="$("dockersand-$app")"
+if command -v "dockersand-args-$app" >/dev/null; then
+  out="$("dockersand-args-$app")"
   [[ -n "$out" ]] && mapfile -t sandbox_args <<<"$out"
 fi
 
