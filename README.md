@@ -66,15 +66,19 @@ With `mount`, the sandbox works directly in your checkout, including its `.git`.
 plant hooks or config (e.g. `core.fsmonitor`) that your host git later executes. It also doesn't work from
 linked git worktrees, whose `.git` points outside the mount.
 
-`DOCKERSAND_GIT_STRATEGY=clone dockersand <app> [args...]` runs the sandbox in a persistent clone instead, kept under
-`~/.local/state/dockersand/clones/` (one per checkout) and reused across runs. The clone starts on your
+`DOCKERSAND_GIT_STRATEGY=clone dockersand <app> [args...]` runs the sandbox in a persistent clone instead, kept at
+`~/.local/state/dockersand/repos/<name>/<repo-name>` (one per checkout) and reused across runs. The clone starts on your
 current branch, has your remotes, and doesn't include uncommitted changes. Bring the work back from your
 own checkout:
 
-    git fetch ~/.local/state/dockersand/clones/<name> <branch>
+    git fetch ~/.local/state/dockersand/repos/<name>/<repo-name> <branch>
 
-Never run git *inside* the clone on the host: its hooks and config are under the sandbox's control.
-Delete the clone to start fresh.
+The sandbox's whole `~/repos` is `~/.local/state/dockersand/repos/<name>`, so anything created next to the clone,
+such as a `git worktree add ../<branch>`, persists across runs too. Branches committed in those worktrees live in the
+clone, so the same `git fetch` brings them back.
+
+Never run git anywhere under `~/.local/state/dockersand/repos/<name>` on the host: hooks and config there are under the
+sandbox's control. Delete that directory to start fresh.
 
 This works best with workflows which end in PRs/branches being pushed to the target repository by the agent,
 and is suitable for running potentially destructive actions on the sandboxed repository. Note that it only

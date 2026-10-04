@@ -24,6 +24,7 @@ if [[ "$(realpath "$repo")" == "$(realpath "$HOME")" || "$(realpath "$repo")" ==
 fi
 
 mount_src="$repo"
+mount_dst="/home/work/repos/$repo_dir"
 
 # DOCKERSAND_GIT_STRATEGY selects what the sandbox works in:
 #   mount (default): the checkout itself, including its .git
@@ -42,12 +43,17 @@ if [[ "$git_strategy" == clone ]]; then
     echo "DOCKERSAND_GIT_STRATEGY=clone needs a git repository" >&2
     exit 1
   fi
-  clone_root="${XDG_STATE_HOME:-$HOME/.local/state}/dockersand/clones"
-  clone="$clone_root/$repo_dir-$(printf %s "$(realpath "$repo")" | sha256sum | cut -c1-8)"
+  state="${XDG_STATE_HOME:-$HOME/.local/state}/dockersand"
+  clone_name="$repo_dir-$(printf %s "$(realpath "$repo")" | sha256sum | cut -c1-8)"
+  # The whole of ~/repos is mounted, with the clone in it, so that worktrees
+  # the sandbox creates next to the clone (../<name>) persist too
+  repos="$state/repos/$clone_name"
+  clone="$repos/$repo_dir"
   if [[ ! -d "$clone" ]]; then
     echo "cloning $repo into $clone..." >&2
-    mkdir -p "$clone_root"
-    tmp="$(mktemp -d "$clone.tmp.XXXXXX")"
+    mkdir -p "$repos"
+    # Outside $repos, so an interrupted clone doesn't show up in the sandbox
+    tmp="$(mktemp -d "$state/clone.tmp.XXXXXX")"
     trap 'rm -rf "$tmp"' EXIT
     # From the common dir, so this works from linked worktrees too. No
     # hardlinks: the sandbox could otherwise rewrite objects shared with the
@@ -70,10 +76,11 @@ if [[ "$git_strategy" == clone ]]; then
   fi
   # Untracked directories don't exist in the clone
   [[ -d "$clone/$subdir" ]] || subdir=""
-  mount_src="$clone"
+  mount_src="$repos"
+  mount_dst="/home/work/repos"
   echo "working in $clone" >&2
   echo "fetch from it with: git fetch $clone <branch>" >&2
-  echo "never run git inside it on the host: its hooks and config are sandbox-controlled" >&2
+  echo "never run git under $repos on the host: hooks and config there are sandbox-controlled" >&2
 fi
 
 echo "launching sandbox image $img..." >&2
@@ -145,7 +152,7 @@ tty=(-i)
 exec docker run --rm \
   --runtime=runsc \
   --security-opt no-new-privileges \
-  -v "$mount_src:$work_dir" \
+  -v "$mount_src:$mount_dst" \
   -w "$work_dir/$subdir" \
   "${sandbox_args[@]}" \
   "${tty[@]}" \
