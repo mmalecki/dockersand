@@ -9,4 +9,4 @@ mkdir -p \
 printf '%s\n' \
   -v "$HOME/.config/featherloop:/home/work/.config/featherloop" \
   -v "$HOME/.local/state/featherloop:/home/work/.local/state/featherloop" \
-  -e ANTHROPIC_API_KEY
+  -e ANTHROPIC_API_KEY -e PARALLEL_API_KEY
