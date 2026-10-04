@@ -66,19 +66,28 @@ With `mount`, the sandbox works directly in your checkout, including its `.git`.
 plant hooks or config (e.g. `core.fsmonitor`) that your host git later executes. It also doesn't work from
 linked git worktrees, whose `.git` points outside the mount.
 
-`DOCKERSAND_GIT_STRATEGY=clone dockersand <app> [args...]` runs the sandbox in a persistent clone instead, kept at
-`~/.local/state/dockersand/repos/<name>/<repo-name>` (one per checkout) and reused across runs. The clone starts on your
-current branch, has your remotes, and doesn't include uncommitted changes. Bring the work back from your
-own checkout:
+`DOCKERSAND_GIT_STRATEGY=clone dockersand <app> [args...]` runs the sandbox in a separate clone instead. Each run
+is a new session with its own clone, kept at `~/.local/state/dockersand/repos/<checkout>/<session>/<repo-name>`,
+so sandboxes started from the same checkout don't share anything. The clone starts on your current branch, has
+your remotes, and doesn't include uncommitted changes. Bring the work back from your own checkout:
 
-    git fetch ~/.local/state/dockersand/repos/<name>/<repo-name> <branch>
+    git fetch ~/.local/state/dockersand/repos/<checkout>/<session>/<repo-name> <branch>
 
-The sandbox's whole `~/repos` is `~/.local/state/dockersand/repos/<name>`, so anything created next to the clone,
-such as a `git worktree add ../<branch>`, persists across runs too. Branches committed in those worktrees live in the
-clone, so the same `git fetch` brings them back.
+The session name is random and printed at startup. Set `DOCKERSAND_SESSION_NAME` to resume a session, or to give a
+new one a memorable name:
 
-Never run git anywhere under `~/.local/state/dockersand/repos/<name>` on the host: hooks and config there are under the
-sandbox's control. Delete that directory to start fresh.
+    DOCKERSAND_GIT_STRATEGY=clone DOCKERSAND_SESSION_NAME=<session> dockersand <app> [args...]
+
+A session runs in at most one sandbox at a time: its container is named after it, and Docker refuses to start a
+second one.
+
+The sandbox's whole `~/repos` is `~/.local/state/dockersand/repos/<checkout>/<session>`, so anything created next to
+the clone, such as a `git worktree add ../<branch>`, persists with the session. Branches committed in those worktrees
+live in the clone, so the same `git fetch` brings them back.
+
+Never run git anywhere under `~/.local/state/dockersand/repos` on the host: hooks and config there are under the
+sandbox's control. Sessions accumulate, each a full clone: delete a session's directory to drop it, or
+`<checkout>` to drop all of a checkout's sessions.
 
 This works best with workflows which end in PRs/branches being pushed to the target repository by the agent,
 and is suitable for running potentially destructive actions on the sandboxed repository. Note that it only

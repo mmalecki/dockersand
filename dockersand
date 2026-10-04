@@ -5,6 +5,7 @@ app="${1:?usage: dockersand <app> [args...]}"
 shift
 img="$app"
 subdir=""
+sandbox_name=()
 
 if repo=$(git rev-parse --show-toplevel 2>/dev/null); then
   repo_dir="$(basename "$repo")"
@@ -28,7 +29,7 @@ mount_dst="/home/work/repos/$repo_dir"
 
 # DOCKERSAND_GIT_STRATEGY selects what the sandbox works in:
 #   mount (default): the checkout itself, including its .git
-#   clone: a persistent, wholly separate clone
+#   clone: a wholly separate clone per session (DOCKERSAND_SESSION_NAME)
 git_strategy="${DOCKERSAND_GIT_STRATEGY:-mount}"
 case "$git_strategy" in
   mount | clone) ;;
@@ -43,11 +44,26 @@ if [[ "$git_strategy" == clone ]]; then
     echo "DOCKERSAND_GIT_STRATEGY=clone needs a git repository" >&2
     exit 1
   fi
+  # DOCKERSAND_SESSION_NAME picks the clone, so that runs are isolated from
+  # each other unless they resume a session by name
+  session="${DOCKERSAND_SESSION_NAME:-$(od -An -N4 -tx4 /dev/urandom | tr -d ' ')}"
+  if [[ ! "$session" =~ ^[A-Za-z0-9._-]+$ || "$session" == . || "$session" == .. ]]; then
+    echo "invalid DOCKERSAND_SESSION_NAME: $session (expected [A-Za-z0-9._-]+)" >&2
+    exit 1
+  fi
   state="${XDG_STATE_HOME:-$HOME/.local/state}/dockersand"
-  clone_name="$repo_dir-$(printf %s "$(realpath "$repo")" | sha256sum | cut -c1-8)"
+  checkout_name="$repo_dir-$(printf %s "$(realpath "$repo")" | sha256sum | cut -c1-8)"
+  # Docker refuses a second container with the same name, so a session runs
+  # in at most one sandbox at a time
+  container_name="dockersand-$(printf %s "$checkout_name" | tr -c 'A-Za-z0-9_.-' _)-$session"
+  if docker container inspect "$container_name" >/dev/null 2>&1; then
+    echo "session $session is already running (container $container_name)" >&2
+    exit 1
+  fi
+  echo "session $session, resume with: DOCKERSAND_GIT_STRATEGY=clone DOCKERSAND_SESSION_NAME=$session dockersand $app" >&2
   # The whole of ~/repos is mounted, with the clone in it, so that worktrees
   # the sandbox creates next to the clone (../<name>) persist too
-  repos="$state/repos/$clone_name"
+  repos="$state/repos/$checkout_name/$session"
   clone="$repos/$repo_dir"
   if [[ ! -d "$clone" ]]; then
     echo "cloning $repo into $clone..." >&2
@@ -86,6 +102,10 @@ if [[ "$git_strategy" == clone ]]; then
   echo "working in $clone" >&2
   echo "fetch from it with: git fetch $clone <branch>" >&2
   echo "never run git under $repos on the host: hooks and config there are sandbox-controlled" >&2
+  sandbox_name=(--name "$container_name")
+elif [[ -n "${DOCKERSAND_SESSION_NAME:-}" ]]; then
+  echo "DOCKERSAND_SESSION_NAME needs DOCKERSAND_GIT_STRATEGY=clone" >&2
+  exit 1
 fi
 
 echo "launching sandbox image $img..." >&2
@@ -157,6 +177,7 @@ tty=(-i)
 exec docker run --rm \
   --runtime=runsc \
   --security-opt no-new-privileges \
+  "${sandbox_name[@]}" \
   -v "$mount_src:$mount_dst" \
   -w "$work_dir/$subdir" \
   "${sandbox_args[@]}" \
