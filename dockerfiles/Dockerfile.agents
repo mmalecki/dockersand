@@ -55,6 +55,8 @@ ENV PATH="$FNM_DIR:$FNM_DIR/aliases/default/bin:/home/work/.npm/bin:$PATH"
 
 RUN npm config set prefix "/home/work/.npm"
 
+RUN npm -g install chrome-devtools-mcp
+
 COPY --chmod=755 dockerfiles/docker-rootless.sh /usr/local/bin/docker
 ENV XDG_RUNTIME_DIR=/home/work/.docker/run
 ENV DOCKER_HOST=unix:///home/work/.docker/run/docker.sock
