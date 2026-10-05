@@ -33,10 +33,9 @@ docker build -t opencode -f dockerfiles/Dockerfile.opencode .
 dockersand <app> [app-args...]
 ```
 
-launches a Docker container from an image tagged `<app>`,
-mounting the repository (or directory, if outside a git repo) you are in at `/home/work/repos/<repo-name>`
-(where `repo-name` is the name of the top-level repository directory).
-If you've been operating in a repository subdirectory, it drops you into the same one in the sandbox as well.
+launches a Docker container from an image tagged `<app>`, mounting the repository (or directory, if
+outside a git repo) you are in at `/home/work/repos/<repo-name>` (where `repo-name` is the name of the top-level repository directory).
+If you are in a repository subdirectory, it drops you into the same one in the sandbox as well.
 
 By default (inside a git repository) the sandbox works in a separate clone, so it doesn't see uncommitted changes
 and can't modify your `.git`. Use `DOCKERSAND_GIT_STRATEGY=mount` to work in the checkout directly.
@@ -52,7 +51,7 @@ This enables baking custom images per repository, including repository-specific 
 
 ### Per-app hooks
 
-`dockersand-*` files are per-app hooks. They are used to pass additional arguments to Docker, allowing mounting
+`dockersand-args-*` files are per-app hooks. They are used to pass additional arguments to Docker, allowing mounting
 application-specific configuration directories (such as `~/.config/opencode`).
 
 The bundled hooks mount these directories read-write, so the sandbox can
@@ -106,8 +105,12 @@ are resolved separately. The host's gitconfig is not mounted, and commit timesta
 
 ### Docker inside the sandbox
 
-The `agents` base image includes Docker Engine, Buildx, Compose, and rootless Docker tooling. Rebuild it and
-your derived agent images, then opt in when launching:
+The `agents` base image includes Docker Engine, Buildx, Compose, and rootless Docker tooling. Opt-in is
+required due to security concessions this makes - it uses the `runc` runtime instead of `runsc`, enables
+`SYS_ADMIN`, disables the outer seccomp/AppArmor profiles and proc/sys mount restrictions, and permits
+setuid UID/GID mapping helpers. It trades gVisor isolation for nested-container support; ordinary launches
+retain `runsc` and `no-new-privileges`. The host must support unprivileged user namespaces and provide
+`/dev/net/tun`, which is passed through for userspace networking.
 
 ```sh
 DOCKERSAND_DIND=1 dockersand bash
@@ -117,10 +120,6 @@ docker build -t my-solution .
 docker compose up --build
 ```
 
-This mode uses `runc` instead of `runsc`, enables `SYS_ADMIN`, disables the outer seccomp/AppArmor profiles
-and proc/sys mount restrictions, and permits setuid UID/GID mapping helpers. It trades gVisor isolation for
-nested-container support; ordinary launches retain `runsc` and `no-new-privileges`. The host must support
-unprivileged user namespaces and provide `/dev/net/tun`, which is passed through for userspace networking.
 
 The nested daemon starts on the first Docker command and runs as `work`, using a private Unix socket.
 It uses the `vfs` storage driver for compatibility with nested filesystems. Images, containers and volumes
@@ -136,7 +135,7 @@ unavailable without a user systemd session. Startup logs are at `/home/work/.doc
 DOCKERSAND_ENTRYPOINT=/bin/bash dockersand <app> -l
 ```
 
-This is useful when debugging per-app hooks.
+This is useful when debugging per-app hooks, environment setup, etc.
 
 ### SSH forwarding
 
