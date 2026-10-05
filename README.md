@@ -160,8 +160,10 @@ The launch fails if the host has no `gcloud` or can't print a token.
 DOCKERSAND_GCLOUD=1 dockersand <app> [args...]
 ```
 
-Token files are kept in `$XDG_RUNTIME_DIR/dockersand` (or `~/.local/state/dockersand`) and deleted by a later launch once
-expired. With `DOCKERSAND_EGRESS=1`, `squid.conf` also needs to allow `.googleapis.com`.
+While the sandbox runs, a background process on the host fetches a new token every 50 minutes. It stops and deletes the
+token as soon as the sandbox quits, and also stops if a refresh fails, after which gcloud in the sandbox loses access
+within the hour. Tokens are kept in `$XDG_RUNTIME_DIR/dockersand` (or `~/.local/state/dockersand`). With
+`DOCKERSAND_EGRESS=1`, `squid.conf` also needs to allow `.googleapis.com`.
 
 ### Host gateway
 
