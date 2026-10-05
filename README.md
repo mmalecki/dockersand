@@ -97,6 +97,13 @@ plant hooks or config (e.g. `core.fsmonitor`) that your host git later executes.
 linked git worktrees, whose `.git` points outside the mount. Outside a git repository the default is to mount
 the directory (equivalent to `mount`).
 
+### Git identity
+
+The sandbox receives `GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL`, `GIT_COMMITTER_NAME`, and `GIT_COMMITTER_EMAIL`
+from the identity Git resolves in your host checkout. This respects repository-specific config, conditional
+includes, and explicit `GIT_AUTHOR_*` / `GIT_COMMITTER_*` environment overrides. Author and committer identities
+are resolved separately. The host's gitconfig is not mounted, and commit timestamps are not forwarded.
+
 ### Entrypoint override
 
 `DOCKERSAND_ENTRYPOINT` overrides the image's default entrypoint. Any `[args...]` are passed to the new entrypoint:
@@ -159,3 +166,7 @@ in particular, [this gist](https://gist.github.com/wincent/2752d8d97727577050c04
 
 If you're looking for something even more generic than this, `wc -l dockersand`
 may be enlightening on the build-vs-buy conundrum.
+
+## Tests
+
+Run `bash tests/launcher.sh` to check Git identity resolution without a Docker daemon.

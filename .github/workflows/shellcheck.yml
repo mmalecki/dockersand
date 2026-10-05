@@ -6,11 +6,13 @@ on:
       - '**/*.sh'
       - '**/*.bash'
       - 'dockersand*'
+      - 'tests/**'
   pull_request:
     paths:
       - '**/*.sh'
       - '**/*.bash'
       - 'dockersand*'
+      - 'tests/**'
 
 jobs:
   shellcheck:
@@ -26,3 +28,6 @@ jobs:
             .github
           severity: warning
           check_together: true
+
+      - name: Test launcher
+        run: bash tests/launcher.sh
