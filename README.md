@@ -13,6 +13,7 @@ It's like pocket sand - it certainly won't stop anyone, but it'll definitely may
 
 Prerequisites: [gVisor installed and configured as a Docker runtime](https://gvisor.dev/docs/user_guide/quick_start/docker/).
 If you would like to use SSH forwarding, configure runsc with `--host-uds=open`, and set `DOCKERSAND_SSH=1` when running.
+Session D-Bus forwarding also requires `--host-uds=open`.
 
 For now, installation is manual. Drop every `dockersand*` script on your `PATH`.
 
@@ -190,6 +191,34 @@ token as soon as the sandbox quits, and also stops if a refresh fails, after whi
 within the hour. Tokens are kept in `$XDG_RUNTIME_DIR/dockersand` (or `~/.local/state/dockersand`). With
 `DOCKERSAND_EGRESS=1`, `squid.conf` also needs to allow `.googleapis.com`.
 
+### Session D-Bus forwarding
+
+Set `DOCKERSAND_DBUS=1` to let the sandbox use your host session bus:
+
+```sh
+DOCKERSAND_DBUS=1 dockersand bash
+# Inside an agents-based image:
+notify-send "Agent finished" "The tests passed."
+secret-tool lookup service my-project account deploy
+```
+
+The launcher reads `DBUS_SESSION_BUS_ADDRESS` and mounts its Unix filesystem socket at `/tmp/dbus-session.sock`,
+then sets the container's session address to that path. If the address is unset or empty, it uses
+`$XDG_RUNTIME_DIR/bus`, or `/run/user/$(id -u)/bus` when the runtime directory is unset. Address lists and
+percent-escaped paths are supported. Abstract Unix sockets and other transports cannot be bind-mounted;
+provide a filesystem socket address. An explicit address never falls back to a different bus.
+
+This requires runsc's `--host-uds=open`. The image's user must have the same numeric UID as your host user
+for D-Bus authentication. The base image defaults to UID 1000; rebuild it for a different user with
+`docker build --build-arg WORK_UID="$(id -u)" -t agents -f dockerfiles/Dockerfile.agents .`,
+then rebuild the derived images. The base image includes `dbus-send`, `notify-send`, and `secret-tool`.
+Notifications require a host notification service, and secret lookups require a host Secret Service such
+as GNOME Keyring or KeePassXC; locked secrets may prompt on the host desktop.
+
+Forwarding gives the sandbox access to all your session bus services, including notifications and secrets.
+This is an intentional opt-in for friendly workloads. The system bus and the rest of the runtime directory
+are not forwarded. A read-only socket mount still permits D-Bus method calls.
+
 ### Host gateway
 
 Without egress filtering, the host is reachable from the sandbox as `host.docker.internal`, for example to use an
@@ -219,3 +248,8 @@ After rebuilding the images, test nested builds, networking and Compose with:
 ```sh
 DOCKERSAND_GIT_STRATEGY=mount DOCKERSAND_DIND=1 dockersand bash tests/dind.sh
 ```
+
+Run `bash tests/dbus.sh` to check session-bus selection, address parsing, and opt-in behavior. The test uses
+a private D-Bus daemon and a mock Docker command; it needs `dbus-daemon` and does not access your desktop bus.
+For a live gVisor test after rebuilding the images, run `bash tests/dbus-integration.sh agents` on the host.
+It verifies D-Bus authentication against its own private bus and checks the notification and secret clients.

@@ -234,6 +234,45 @@ if [[ "${DOCKERSAND_GCLOUD:-}" == 1 ]]; then
   ) </dev/null >/dev/null 2>&1 &
 fi
 
+# Forward the session bus only when requested. D-Bus addresses escape path
+# bytes and may contain multiple transports; select a usable filesystem socket.
+if [[ "${DOCKERSAND_DBUS:-}" == 1 ]]; then
+  dbus_socket=""
+  if [[ -n "${DBUS_SESSION_BUS_ADDRESS:-}" ]]; then
+    IFS=';' read -r -a dbus_addresses <<<"$DBUS_SESSION_BUS_ADDRESS"
+    for address in "${dbus_addresses[@]}"; do
+      [[ "$address" == unix:* ]] || continue
+      IFS=, read -r -a dbus_options <<<"${address#unix:}"
+      for option in "${dbus_options[@]}"; do
+        [[ "$option" == path=* ]] || continue
+        encoded_path="${option#path=}"
+        if [[ ! "$encoded_path" =~ ^([-0-9A-Za-z_/.\*]|%[0-9A-Fa-f]{2})+$ || "$encoded_path" == *%00* ]]; then
+          echo "invalid filesystem path in DBUS_SESSION_BUS_ADDRESS" >&2
+          exit 1
+        fi
+        printf -v candidate '%b' "${encoded_path//%/\\x}"
+        if [[ "$candidate" == /* && -S "$candidate" ]]; then
+          dbus_socket="$candidate"
+          break 2
+        fi
+      done
+    done
+  else
+    dbus_socket="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/bus"
+  fi
+  if [[ ! -S "$dbus_socket" ]]; then
+    echo "DOCKERSAND_DBUS=1 needs a session bus filesystem socket; set DBUS_SESSION_BUS_ADDRESS=unix:path=/path/to/bus" >&2
+    exit 1
+  fi
+  # Docker --mount uses CSV fields; quote the source to support commas, spaces
+  # and colons without exposing the rest of the host's runtime directory.
+  dbus_mount_src="${dbus_socket//\"/\"\"}"
+  sandbox_args+=(
+    --mount "type=bind,\"src=$dbus_mount_src\",dst=/tmp/dbus-session.sock,readonly"
+    -e DBUS_SESSION_BUS_ADDRESS=unix:path=/tmp/dbus-session.sock
+  )
+fi
+
 # Resolve identity in the host checkout, including local config, conditional
 # includes and environment overrides. Author and committer can be different.
 # Forward only name/email, not the timestamp returned by git var.
