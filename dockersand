@@ -206,7 +206,9 @@ if [[ "${DOCKERSAND_GCLOUD:-}" == 1 ]]; then
     sandbox_args+=(-e "CLOUDSDK_CORE_PROJECT=$project")
   fi
 
-  # Tokens last an hour, so refresh them while the sandbox runs. exec keeps
+  # Tokens last an hour, so refresh them while the sandbox runs. gcloud returns
+  # its cached token, which may be most of the way to expiry, until under 3m45s
+  # remain, so ask every 2 minutes; mostly that's a cache hit. exec keeps
   # this PID for docker run, so the refresher stops, and deletes the token, as
   # soon as the sandbox quits. The start time guards against PID reuse.
   proc_start() {
@@ -226,7 +228,7 @@ if [[ "${DOCKERSAND_GCLOUD:-}" == 1 ]]; then
     while [[ "$(proc_start "$sandbox_pid" 2>/dev/null)" == "$sandbox_start" ]]; do
       # By mtime, so a refresh is due straight away after a suspend. A failed
       # refresh stops, rather than retrying with the host's credentials.
-      if [[ -n "$(find "$token_dir/token" -mmin +50)" ]]; then
+      if [[ -n "$(find "$token_dir/token" -mmin +2)" ]]; then
         refresh_token || exit
       fi
       sleep 5

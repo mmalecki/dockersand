@@ -182,7 +182,7 @@ done
 echo 'PASS: opt-in gcloud token forwarding'
 
 echo refreshed >"$FAKE_GCLOUD_TOKEN_FILE"
-touch -d '1 hour ago' "$token_dir/token"
+touch -d '3 minutes ago' "$token_dir/token"
 wait_for grep -qx refreshed "$token_dir/token" || fail 'token not refreshed'
 echo 'PASS: gcloud token refreshes while the sandbox runs'
 
