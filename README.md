@@ -18,11 +18,11 @@ You will also need to build and tag the images you would like to use. The exampl
 `claude`, `codex`, `opencode`, `bash`, and a base image for them all: `agents`. To build the full suite:
 
 ```sh
-docker build -t agents -f dockerfiles/agents .
-docker build -t bash -f dockerfiles/bash .
-docker build -t claude -f dockerfiles/claude .
-docker build -t codex -f dockerfiles/codex .
-docker build -t opencode -f dockerfiles/opencode .
+docker build -t agents -f dockerfiles/Dockerfile.agents .
+docker build -t bash -f dockerfiles/Dockerfile.bash .
+docker build -t claude -f dockerfiles/Dockerfile.claude .
+docker build -t codex -f dockerfiles/Dockerfile.codex .
+docker build -t opencode -f dockerfiles/Dockerfile.opencode .
 ```
 
 `dockersand` is not prescriptive - it'll work with any Docker image you supply it.
@@ -104,6 +104,30 @@ from the identity Git resolves in your host checkout. This respects repository-s
 includes, and explicit `GIT_AUTHOR_*` / `GIT_COMMITTER_*` environment overrides. Author and committer identities
 are resolved separately. The host's gitconfig is not mounted, and commit timestamps are not forwarded.
 
+### Docker inside the sandbox
+
+The `agents` base image includes Docker Engine, Buildx, Compose, and rootless Docker tooling. Rebuild it and
+your derived agent images, then opt in when launching:
+
+```sh
+DOCKERSAND_DIND=1 dockersand bash
+# Inside the sandbox:
+docker run --rm hello-world
+docker build -t my-solution .
+docker compose up --build
+```
+
+This mode uses `runc` instead of `runsc`, enables `SYS_ADMIN`, disables the outer seccomp/AppArmor profiles
+and proc/sys mount restrictions, and permits setuid UID/GID mapping helpers. It trades gVisor isolation for
+nested-container support; ordinary launches retain `runsc` and `no-new-privileges`. The host must support
+unprivileged user namespaces and provide `/dev/net/tun`, which is passed through for userspace networking.
+
+The nested daemon starts on the first Docker command and runs as `work`, using a private Unix socket.
+It uses the `vfs` storage driver for compatibility with nested filesystems. Images, containers and volumes
+last for the sandbox's lifetime; Docker does not use the host daemon or its socket. Publish nested ports
+with `docker run -p` to reach them from the agent inside the sandbox. Rootless cgroup resource limits are
+unavailable without a user systemd session. Startup logs are at `/home/work/.docker/run/dockerd.log`.
+
 ### Entrypoint override
 
 `DOCKERSAND_ENTRYPOINT` overrides the image's default entrypoint. Any `[args...]` are passed to the new entrypoint:
@@ -169,4 +193,9 @@ may be enlightening on the build-vs-buy conundrum.
 
 ## Tests
 
-Run `bash tests/launcher.sh` to check Git identity resolution without a Docker daemon.
+Run `bash tests/launcher.sh` to check Git identity resolution and runtime selection without a Docker daemon.
+After rebuilding the images, test nested builds, networking and Compose with:
+
+```sh
+DOCKERSAND_GIT_STRATEGY=mount DOCKERSAND_DIND=1 dockersand bash tests/dind.sh
+```

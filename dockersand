@@ -181,6 +181,22 @@ for role in AUTHOR COMMITTER; do
   fi
 done
 
+# Opt-in rootless Docker needs user namespaces, its setuid mapping helpers,
+# writable proc/sys mounts and a TUN device for userspace networking.
+sandbox_runtime=runsc
+sandbox_security=(--security-opt no-new-privileges)
+if [[ "${DOCKERSAND_DIND:-}" == 1 ]]; then
+  sandbox_runtime=runc
+  sandbox_security=(
+    --cap-add SYS_ADMIN
+    --security-opt seccomp=unconfined
+    --security-opt apparmor=unconfined
+    --security-opt systempaths=unconfined
+    --device /dev/net/tun
+  )
+  sandbox_args+=(-e DOCKERSAND_DIND=1)
+fi
+
 # DOCKERSAND_EGRESS=1: no direct network, only allowlisted domains via the
 # proxy from docker-compose.yml
 if [[ "${DOCKERSAND_EGRESS:-}" == 1 ]]; then
@@ -222,8 +238,8 @@ tty=(-i)
 [[ -t 0 && -t 1 ]] && tty+=(-t)
 
 exec docker run --rm \
-  --runtime=runsc \
-  --security-opt no-new-privileges \
+  "--runtime=$sandbox_runtime" \
+  "${sandbox_security[@]}" \
   "${sandbox_name[@]}" \
   -v "$mount_src:$mount_dst" \
   -w "$work_dir/$subdir" \

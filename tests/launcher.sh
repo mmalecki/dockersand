@@ -10,7 +10,7 @@ export GIT_CONFIG_GLOBAL="$fixture/gitconfig" GIT_CONFIG_NOSYSTEM=1
 export XDG_STATE_HOME="$fixture/state" DOCKERSAND_ARGS_FILE="$fixture/args"
 unset GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL
 unset GIT_AUTHOR_DATE GIT_COMMITTER_DATE EMAIL GIT_CONFIG_COUNT
-unset DOCKERSAND_EGRESS DOCKERSAND_SESSION_NAME DOCKERSAND_SSH
+unset DOCKERSAND_DIND DOCKERSAND_EGRESS DOCKERSAND_SESSION_NAME DOCKERSAND_SSH
 unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR
 
 # Capture the actual docker run argv; no daemon is needed for these tests.
@@ -71,6 +71,8 @@ run_sandbox
 assert_identity 'Global Name' global@example.test
 assert_arg --runtime=runsc
 assert_arg no-new-privileges
+assert_no_arg SYS_ADMIN
+assert_no_arg DOCKERSAND_DIND=1
 echo 'PASS: global identity and default isolation'
 
 git -C "$repo" config user.name 'Local Name'
@@ -121,6 +123,19 @@ repo="$fixture/worktree"
 run_sandbox DOCKERSAND_GIT_STRATEGY=clone DOCKERSAND_SESSION_NAME=worktree
 assert_identity 'Conditional Name' conditional@example.test
 echo 'PASS: conditional identity from a linked worktree'
+
+run_sandbox DOCKERSAND_DIND=1
+assert_arg --runtime=runc
+assert_arg SYS_ADMIN
+assert_arg seccomp=unconfined
+assert_arg apparmor=unconfined
+assert_arg systempaths=unconfined
+assert_arg /dev/net/tun
+assert_arg DOCKERSAND_DIND=1
+assert_no_arg --runtime=runsc
+assert_no_arg no-new-privileges
+assert_no_arg --privileged
+echo 'PASS: opt-in rootless Docker permissions'
 
 : >"$GIT_CONFIG_GLOBAL"
 git config --global user.useConfigOnly true
