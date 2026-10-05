@@ -31,6 +31,17 @@ RUN mkdir -p -m 755 /etc/apt/keyrings \
  && apt install -y --no-install-recommends gh \
  && rm -rf /var/lib/apt/lists/*
 
+RUN curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg \
+    -o /etc/apt/keyrings/cloud.google.asc \
+ && chmod go+r /etc/apt/keyrings/cloud.google.asc \
+ && echo "deb [signed-by=/etc/apt/keyrings/cloud.google.asc] https://packages.cloud.google.com/apt cloud-sdk main" \
+    > /etc/apt/sources.list.d/google-cloud-sdk.list \
+ && apt update -y \
+ && apt install -y --no-install-recommends google-cloud-cli \
+ && rm -rf /var/lib/apt/lists/*
+# Developer privacy: never send gcloud usage statistics
+ENV CLOUDSDK_CORE_DISABLE_USAGE_REPORTING=true
+
 ARG YQ_VERSION=latest
 RUN if [ "$YQ_VERSION" = latest ]; then yq_path=latest/download; else yq_path="download/$YQ_VERSION"; fi \
  && curl -fsSL -o /usr/local/bin/yq \
