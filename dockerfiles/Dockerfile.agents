@@ -5,8 +5,20 @@ RUN apt install -y --no-install-recommends \
     ca-certificates git curl wget unzip zip xz-utils \
     ripgrep fd-find jq less file tree procps \
     build-essential python3 python3-pip python3-venv \
-    openssh-client netcat-openbsd gnupg \
+    openssh-client netcat-openbsd gnupg uidmap slirp4netns iproute2 \
+    bubblewrap \
  && ln -s /usr/bin/fdfind /usr/local/bin/fd \
+ && rm -rf /var/lib/apt/lists/*
+
+RUN curl -fsSL https://download.docker.com/linux/debian/gpg \
+    -o /etc/apt/keyrings/docker.asc \
+ && chmod go+r /etc/apt/keyrings/docker.asc \
+ && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian trixie stable" \
+    > /etc/apt/sources.list.d/docker.list \
+ && apt update -y \
+ && apt install -y --no-install-recommends \
+    docker-ce docker-ce-cli containerd.io docker-ce-rootless-extras \
+    docker-buildx-plugin docker-compose-plugin \
  && rm -rf /var/lib/apt/lists/*
 
 RUN mkdir -p -m 755 /etc/apt/keyrings \
@@ -27,6 +39,10 @@ RUN if [ "$YQ_VERSION" = latest ]; then yq_path=latest/download; else yq_path="d
 
 RUN groupadd work
 RUN useradd -m work -g work
+# useradd allocates subordinate IDs for rootless containers by default.
+RUN test -s /etc/subuid && test -s /etc/subgid \
+ && install -d -m 700 -o work -g work /home/work/.docker /home/work/.docker/run
+
 USER work:work
 
 ARG NODE_VERSION=24
@@ -38,3 +54,7 @@ RUN curl -fsSL https://fnm.vercel.app/install | bash -s -- --install-dir "$FNM_D
 ENV PATH="$FNM_DIR:$FNM_DIR/aliases/default/bin:/home/work/.npm/bin:$PATH"
 
 RUN npm config set prefix "/home/work/.npm"
+
+COPY --chmod=755 dockerfiles/docker-rootless.sh /usr/local/bin/docker
+ENV XDG_RUNTIME_DIR=/home/work/.docker/run
+ENV DOCKER_HOST=unix:///home/work/.docker/run/docker.sock

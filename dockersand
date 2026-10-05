@@ -171,24 +171,30 @@ if [[ "${DOCKERSAND_SSH:-}" == 1 ]]; then
   fi
 fi
 
-# Pass git identity via env, as the sandbox has no access to the host's gitconfig.
-# --global --includes respects includeIf/include.path (work/personal identity).
-# Note: per-repo identity is no longer passed through (sandbox can set its own).
-if git_name="$(git config --global --includes user.name 2>/dev/null)"; then
-  :
-elif git_name="$(git config --system user.name 2>/dev/null)"; then
-  :
-fi
-if [[ -n "$git_name" ]]; then
-  sandbox_args+=(-e "GIT_AUTHOR_NAME=$git_name" -e "GIT_COMMITTER_NAME=$git_name")
-fi
-if git_email="$(git config --global --includes user.email 2>/dev/null)"; then
-  :
-elif git_email="$(git config --system user.email 2>/dev/null)"; then
-  :
-fi
-if [[ -n "$git_email" ]]; then
-  sandbox_args+=(-e "GIT_AUTHOR_EMAIL=$git_email" -e "GIT_COMMITTER_EMAIL=$git_email")
+# Resolve identity in the host checkout, including local config, conditional
+# includes and environment overrides. Author and committer can be different.
+# Forward only name/email, not the timestamp returned by git var.
+for role in AUTHOR COMMITTER; do
+  if ident="$(git var "GIT_${role}_IDENT" 2>/dev/null)" &&
+    [[ "$ident" =~ ^(.*)\ \<(.*)\>\ [0-9]+\ [-+][0-9]{4}$ ]]; then
+    sandbox_args+=(-e "GIT_${role}_NAME=${BASH_REMATCH[1]}" -e "GIT_${role}_EMAIL=${BASH_REMATCH[2]}")
+  fi
+done
+
+# Opt-in rootless Docker needs user namespaces, its setuid mapping helpers,
+# writable proc/sys mounts and a TUN device for userspace networking.
+sandbox_runtime=runsc
+sandbox_security=(--security-opt no-new-privileges)
+if [[ "${DOCKERSAND_DIND:-}" == 1 ]]; then
+  sandbox_runtime=runc
+  sandbox_security=(
+    --cap-add SYS_ADMIN
+    --security-opt seccomp=unconfined
+    --security-opt apparmor=unconfined
+    --security-opt systempaths=unconfined
+    --device /dev/net/tun
+  )
+  sandbox_args+=(-e DOCKERSAND_DIND=1)
 fi
 
 # DOCKERSAND_EGRESS=1: no direct network, only allowlisted domains via the
@@ -210,7 +216,7 @@ if [[ "${DOCKERSAND_EGRESS:-}" == 1 ]]; then
     --network dockersand-internal
     -e "HTTP_PROXY=$proxy_url" -e "http_proxy=$proxy_url"
     -e "HTTPS_PROXY=$proxy_url" -e "https_proxy=$proxy_url"
-    -e NO_PROXY=localhost,127.0.0.1 -e no_proxy=localhost,127.0.0.1
+    -e "NO_PROXY=localhost,127.0.0.1" -e "no_proxy=localhost,127.0.0.1"
     # ssh ignores HTTP proxies, so tunnel git's ssh through CONNECT
     -e "GIT_SSH_COMMAND=ssh -o ProxyCommand='nc -X connect -x $proxy_ip:3128 %h %p'"
   )
@@ -232,8 +238,8 @@ tty=(-i)
 [[ -t 0 && -t 1 ]] && tty+=(-t)
 
 exec docker run --rm \
-  --runtime=runsc \
-  --security-opt no-new-privileges \
+  "--runtime=$sandbox_runtime" \
+  "${sandbox_security[@]}" \
   "${sandbox_name[@]}" \
   -v "$mount_src:$mount_dst" \
   -w "$work_dir/$subdir" \
