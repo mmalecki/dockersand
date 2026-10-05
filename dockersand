@@ -171,6 +171,45 @@ if [[ "${DOCKERSAND_SSH:-}" == 1 ]]; then
   fi
 fi
 
+# Forward the session bus only when requested. D-Bus addresses escape path
+# bytes and may contain multiple transports; select a usable filesystem socket.
+if [[ "${DOCKERSAND_DBUS:-}" == 1 ]]; then
+  dbus_socket=""
+  if [[ -n "${DBUS_SESSION_BUS_ADDRESS:-}" ]]; then
+    IFS=';' read -r -a dbus_addresses <<<"$DBUS_SESSION_BUS_ADDRESS"
+    for address in "${dbus_addresses[@]}"; do
+      [[ "$address" == unix:* ]] || continue
+      IFS=, read -r -a dbus_options <<<"${address#unix:}"
+      for option in "${dbus_options[@]}"; do
+        [[ "$option" == path=* ]] || continue
+        encoded_path="${option#path=}"
+        if [[ ! "$encoded_path" =~ ^([-0-9A-Za-z_/.\*]|%[0-9A-Fa-f]{2})+$ || "$encoded_path" == *%00* ]]; then
+          echo "invalid filesystem path in DBUS_SESSION_BUS_ADDRESS" >&2
+          exit 1
+        fi
+        printf -v candidate '%b' "${encoded_path//%/\\x}"
+        if [[ "$candidate" == /* && -S "$candidate" ]]; then
+          dbus_socket="$candidate"
+          break 2
+        fi
+      done
+    done
+  else
+    dbus_socket="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/bus"
+  fi
+  if [[ ! -S "$dbus_socket" ]]; then
+    echo "DOCKERSAND_DBUS=1 needs a session bus filesystem socket; set DBUS_SESSION_BUS_ADDRESS=unix:path=/path/to/bus" >&2
+    exit 1
+  fi
+  # Docker --mount uses CSV fields; quote the source to support commas, spaces
+  # and colons without exposing the rest of the host's runtime directory.
+  dbus_mount_src="${dbus_socket//\"/\"\"}"
+  sandbox_args+=(
+    --mount "type=bind,\"src=$dbus_mount_src\",dst=/tmp/dbus-session.sock,readonly"
+    -e DBUS_SESSION_BUS_ADDRESS=unix:path=/tmp/dbus-session.sock
+  )
+fi
+
 # Pass git identity via env, as the sandbox has no access to the host's gitconfig.
 # --global --includes respects includeIf/include.path (work/personal identity).
 # Note: per-repo identity is no longer passed through (sandbox can set its own).
@@ -210,7 +249,7 @@ if [[ "${DOCKERSAND_EGRESS:-}" == 1 ]]; then
     --network dockersand-internal
     -e "HTTP_PROXY=$proxy_url" -e "http_proxy=$proxy_url"
     -e "HTTPS_PROXY=$proxy_url" -e "https_proxy=$proxy_url"
-    -e NO_PROXY=localhost,127.0.0.1 -e no_proxy=localhost,127.0.0.1
+    -e "NO_PROXY=localhost,127.0.0.1" -e "no_proxy=localhost,127.0.0.1"
     # ssh ignores HTTP proxies, so tunnel git's ssh through CONNECT
     -e "GIT_SSH_COMMAND=ssh -o ProxyCommand='nc -X connect -x $proxy_ip:3128 %h %p'"
   )

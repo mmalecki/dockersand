@@ -26,3 +26,6 @@ jobs:
             .github
           severity: warning
           check_together: true
+
+      - name: Test D-Bus forwarding
+        run: bash tests/dbus.sh
