@@ -10,7 +10,7 @@ It's like pocket sand - it certainly won't stop anyone, but it'll definitely may
 ## Installation
 
 Prerequisites: [gVisor installed and configured as a Docker runtime](https://gvisor.dev/docs/user_guide/quick_start/docker/).
-If you would like to use SSH forwarding, configure runsc with `--host-uds=open`.
+If you would like to use SSH forwarding, configure runsc with `--host-uds=open`, and set `DOCKERSAND_SSH=1` when running.
 
 For now, installation is manual. Drop every `dockersand*` script on your `PATH`.
 
@@ -34,9 +34,12 @@ dockersand <app> [app-args...]
 ```
 
 launches a Docker container from an image tagged `<app>`,
-mounting the repository or directory you are in at `/home/work/repos/<repo-name>`
+mounting the repository (or directory, if outside a git repo) you are in at `/home/work/repos/<repo-name>`
 (where `repo-name` is the name of the top-level repository directory).
 If you've been operating in a repository subdirectory, it drops you into the same one in the sandbox as well.
+
+By default (inside a git repository) the sandbox works in a separate clone, so it doesn't see uncommitted changes
+and can't modify your `.git`. Use `DOCKERSAND_GIT_STRATEGY=mount` to work in the checkout directly.
 
 The easiest way to explore the environment (without building anything) is running `dockersand alpine`.
 If you've built the base images, running `dockersand bash` will get you the same environment the agent images run in.
@@ -52,31 +55,27 @@ This enables baking custom images per repository, including repository-specific 
 `dockersand-*` files are per-app hooks. They are used to pass additional arguments to Docker, allowing mounting
 application-specific configuration directories (such as `~/.config/opencode`).
 
-The bundled hooks mount these directories read-write, so, like `.git` with the `mount` git strategy, the sandbox can
-plant code that runs on the host the next time you use that app outside the sandbox: hooks in `~/.claude/settings.json`,
-plugins in `~/.config/opencode`, or MCP server commands in `~/.codex/config.toml`. Unlike `.git`, this isn't limited
+The bundled hooks mount these directories read-write, so the sandbox can
+plant code that runs on the host the next time you use that app outside the sandbox (e.g. hooks in `~/.claude/settings.json`,
+plugins in `~/.config/opencode`, or MCP server commands in `~/.codex/config.toml`). Unlike `.git`, this isn't limited
 to one repository. If you also run these apps unsandboxed, review changes to their configuration, or edit the hooks to
 mount only what the app needs.
 
 ### Git strategy
 
-`DOCKERSAND_GIT_STRATEGY` selects what the sandbox works in: `mount` (the default) or `clone`.
+`DOCKERSAND_GIT_STRATEGY` selects what the sandbox works in: `clone` (the default) or `mount`.
 
-With `mount`, the sandbox works directly in your checkout, including its `.git`. That means the sandbox can
-plant hooks or config (e.g. `core.fsmonitor`) that your host git later executes. It also doesn't work from
-linked git worktrees, whose `.git` points outside the mount.
-
-`DOCKERSAND_GIT_STRATEGY=clone dockersand <app> [args...]` runs the sandbox in a separate clone instead. Each run
-is a new session with its own clone, kept at `~/.local/state/dockersand/repos/<checkout>/<session>/<repo-name>`,
+With `clone`, the sandbox works in a separate clone, so it doesn't see uncommitted changes and can't modify your
+`.git`. Each run is a new session with its own clone, kept at `~/.local/state/dockersand/repos/<checkout>/<session>/<repo-name>`,
 so sandboxes started from the same checkout don't share anything. The clone starts on your current branch, has
-your remotes, and doesn't include uncommitted changes. Bring the work back from your own checkout:
+your remotes, and is independent of the working copy. Bring the work back from your sandbox:
 
     git fetch ~/.local/state/dockersand/repos/<checkout>/<session>/<repo-name> <branch>
 
 The session name is random and printed at startup. Set `DOCKERSAND_SESSION_NAME` to resume a session, or to give a
 new one a memorable name:
 
-    DOCKERSAND_GIT_STRATEGY=clone DOCKERSAND_SESSION_NAME=<session> dockersand <app> [args...]
+    DOCKERSAND_SESSION_NAME=<session> dockersand <app> [args...]
 
 A session runs in at most one sandbox at a time: its container is named after it, and Docker refuses to start a
 second one.
@@ -91,7 +90,12 @@ sandbox's control. Sessions accumulate, each a full clone: delete a session's di
 
 This works best with workflows which end in PRs/branches being pushed to the target repository by the agent,
 and is suitable for running potentially destructive actions on the sandboxed repository. Note that it only
-protects your working copy: the clone keeps your remotes, so with SSH forwarding the sandbox can still push to them.
+protects your working copy: the clone keeps your remotes, so with `DOCKERSAND_SSH=1` the sandbox can still push to them.
+
+Use `DOCKERSAND_GIT_STRATEGY=mount` to work directly in the checkout, including its `.git`. That means the sandbox can
+plant hooks or config (e.g. `core.fsmonitor`) that your host git later executes. It also doesn't work from
+linked git worktrees, whose `.git` points outside the mount. Outside a git repository the default is to mount
+the directory (equivalent to `mount`).
 
 ### Entrypoint override
 
@@ -105,14 +109,14 @@ This is useful when debugging per-app hooks.
 
 ### SSH forwarding
 
-If `SSH_AUTH_SOCK` is present, it is passed into the Docker container, alongside a `.ssh/known_hosts` mount.
-This requires that gVisor is configured with the `--host-uds=open` flag. This enables the sandbox to reuse the host's
-SSH credentials (for example, to `git push`).
+Set `DOCKERSAND_SSH=1` to forward the SSH agent into the sandbox. If `SSH_AUTH_SOCK` is present, it is passed in,
+alongside a `.ssh/known_hosts` mount. This requires that gVisor is configured with the `--host-uds=open` flag.
+The `known_hosts` mount is only added when `DOCKERSAND_SSH=1`, since `known_hosts` lists every host you've SSHed to.
 
-To disable SSH forwarding for a single run:
+If `DOCKERSAND_SSH` is `1` but `SSH_AUTH_SOCK` is not set, no agent socket is forwarded (no error is raised).
 
 ```sh
-SSH_AUTH_SOCK= dockersand <app> [args...]
+DOCKERSAND_SSH=1 dockersand <app> [args...]
 ```
 
 ### Host gateway

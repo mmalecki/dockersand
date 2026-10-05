@@ -65,9 +65,15 @@ mount_src="$rp_repo"
 mount_dst="/home/work/repos/$repo_dir"
 
 # DOCKERSAND_GIT_STRATEGY selects what the sandbox works in:
-#   mount (default): the checkout itself, including its .git
-#   clone: a wholly separate clone per session (DOCKERSAND_SESSION_NAME)
-git_strategy="${DOCKERSAND_GIT_STRATEGY:-mount}"
+#   clone (default): a wholly separate clone per session (DOCKERSAND_SESSION_NAME)
+#   mount: the checkout itself, including its .git (use DOCKERSAND_GIT_STRATEGY=mount)
+if [[ -n "${DOCKERSAND_GIT_STRATEGY:-}" ]]; then
+  git_strategy="$DOCKERSAND_GIT_STRATEGY"
+elif git rev-parse --show-toplevel >/dev/null 2>&1; then
+  git_strategy=clone
+else
+  git_strategy=mount  # no .git to protect
+fi
 case "$git_strategy" in
   mount | clone) ;;
   *)
@@ -156,11 +162,13 @@ if command -v "dockersand-args-$app" >/dev/null; then
 fi
 
 # Needs runsc configured with --host-uds=open to connect to host sockets
-if [[ -n "${SSH_AUTH_SOCK:-}" ]]; then
-  sandbox_args+=(-v "$SSH_AUTH_SOCK:/tmp/ssh-agent.sock" -e SSH_AUTH_SOCK=/tmp/ssh-agent.sock)
-fi
-if [[ -f "$HOME/.ssh/known_hosts" ]]; then
-  sandbox_args+=(-v "$HOME/.ssh/known_hosts:/home/work/.ssh/known_hosts:ro")
+if [[ "${DOCKERSAND_SSH:-}" == 1 ]]; then
+  if [[ -n "${SSH_AUTH_SOCK:-}" ]]; then
+    sandbox_args+=(-v "$SSH_AUTH_SOCK:/tmp/ssh-agent.sock" -e SSH_AUTH_SOCK=/tmp/ssh-agent.sock)
+  fi
+  if [[ -f "$HOME/.ssh/known_hosts" ]]; then
+    sandbox_args+=(-v "$HOME/.ssh/known_hosts:/home/work/.ssh/known_hosts:ro")
+  fi
 fi
 
 # Pass git identity via env, as the sandbox has no access to the host's gitconfig.
