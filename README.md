@@ -149,6 +149,20 @@ If `DOCKERSAND_SSH` is `1` but `SSH_AUTH_SOCK` is not set, no agent socket is fo
 DOCKERSAND_SSH=1 dockersand <app> [args...]
 ```
 
+### gcloud
+
+The `agents` base image includes the Google Cloud CLI. Set `DOCKERSAND_GCLOUD=1` to authenticate it with an access token
+from the host's `gcloud auth print-access-token`, which expires after an hour, and to pass in the host's default project as
+`CLOUDSDK_CORE_PROJECT`. `~/.config/gcloud` is not mounted, so the sandbox never sees your refresh tokens or account name.
+The launch fails if the host has no `gcloud` or can't print a token.
+
+```sh
+DOCKERSAND_GCLOUD=1 dockersand <app> [args...]
+```
+
+Token files are kept in `$XDG_RUNTIME_DIR/dockersand` (or `~/.local/state/dockersand`) and deleted by a later launch once
+expired. With `DOCKERSAND_EGRESS=1`, `squid.conf` also needs to allow `.googleapis.com`.
+
 ### Host gateway
 
 Without egress filtering, the host is reachable from the sandbox as `host.docker.internal`, for example to use an
