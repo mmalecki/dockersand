@@ -171,6 +171,71 @@ if [[ "${DOCKERSAND_SSH:-}" == 1 ]]; then
   fi
 fi
 
+# DOCKERSAND_GCLOUD=1: a short-lived access token from the host's gcloud, and
+# its default project. Not ~/.config/gcloud, which holds refresh tokens and
+# the account name.
+if [[ "${DOCKERSAND_GCLOUD:-}" == 1 ]]; then
+  if ! command -v gcloud >/dev/null; then
+    echo "DOCKERSAND_GCLOUD=1 needs gcloud on the host" >&2
+    exit 1
+  fi
+  token_root="${XDG_RUNTIME_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}}/dockersand"
+  install -d -m 700 "$token_root"
+  # Left behind only if the refresher below was killed; its token has expired
+  find "$token_root" -mindepth 1 -maxdepth 1 -name 'gcloud.*' -mmin +60 -exec rm -rf {} +
+  # Readable by the sandbox user whatever its uid; $token_root keeps out others
+  token_dir="$(mktemp -d "$token_root/gcloud.XXXXXX")"
+  chmod 755 "$token_dir"
+  # Renamed into place, so the sandbox never reads a partial token. The whole
+  # directory is mounted, as a file mount would keep the replaced inode.
+  refresh_token() {
+    gcloud auth print-access-token >"$token_dir/token.tmp" &&
+      chmod 644 "$token_dir/token.tmp" &&
+      mv -f "$token_dir/token.tmp" "$token_dir/token"
+  }
+  if ! refresh_token; then
+    rm -rf "$token_dir"
+    echo "gcloud auth print-access-token failed; run gcloud auth login" >&2
+    exit 1
+  fi
+  sandbox_args+=(
+    -v "$token_dir:/run/secrets/gcloud:ro"
+    -e CLOUDSDK_AUTH_ACCESS_TOKEN_FILE=/run/secrets/gcloud/token
+  )
+  if project="$(gcloud config get project 2>/dev/null)" && [[ -n "$project" ]]; then
+    sandbox_args+=(-e "CLOUDSDK_CORE_PROJECT=$project")
+  fi
+
+  # Tokens last an hour, so refresh them while the sandbox runs. gcloud returns
+  # its cached token, which may be most of the way to expiry, until under 3m45s
+  # remain, so ask every 2 minutes; mostly that's a cache hit. exec keeps
+  # this PID for docker run, so the refresher stops, and deletes the token, as
+  # soon as the sandbox quits. The start time guards against PID reuse.
+  proc_start() {
+    local stat fields
+    stat="$(<"/proc/$1/stat")" || return
+    # Fields after the parenthesized command name; starttime is field 22
+    read -ra fields <<<"${stat##*) }"
+    echo "${fields[19]}"
+  }
+  sandbox_pid=$$
+  sandbox_start="$(proc_start "$sandbox_pid")"
+  (
+    trap 'rm -rf "$token_dir"' EXIT
+    trap exit TERM
+    # Ctrl-C and hangups reach docker run, which ends the sandbox and so this
+    trap '' INT HUP
+    while [[ "$(proc_start "$sandbox_pid" 2>/dev/null)" == "$sandbox_start" ]]; do
+      # By mtime, so a refresh is due straight away after a suspend. A failed
+      # refresh stops, rather than retrying with the host's credentials.
+      if [[ -n "$(find "$token_dir/token" -mmin +2)" ]]; then
+        refresh_token || exit
+      fi
+      sleep 5
+    done
+  ) </dev/null >/dev/null 2>&1 &
+fi
+
 # Resolve identity in the host checkout, including local config, conditional
 # includes and environment overrides. Author and committer can be different.
 # Forward only name/email, not the timestamp returned by git var.
