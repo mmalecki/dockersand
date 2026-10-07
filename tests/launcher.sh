@@ -226,11 +226,16 @@ wait_for test -s "$DOCKERSAND_ARGS_FILE" || { cat "$fixture/stderr" >&2; fail 'l
 mapfile -d '' -t args <"$DOCKERSAND_ARGS_FILE"
 assert_arg CLOUDSDK_AUTH_ACCESS_TOKEN_FILE=/run/secrets/gcloud/token
 assert_arg CLOUDSDK_CORE_PROJECT=fake-project
-token_dir=""
-for arg in "${args[@]}"; do
-  [[ "$arg" != *'","dst=/run/secrets/gcloud",readonly' ]] || token_dir="${arg#type=bind,\"src=}"
-done
-token_dir="${token_dir%\",\"dst=/run/secrets/gcloud\",readonly}"
+# The token directory, from the gcloud --mount value in args
+gcloud_token_dir() {
+  local arg
+  token_dir=""
+  for arg in "${args[@]}"; do
+    [[ "$arg" != *'","dst=/run/secrets/gcloud",readonly' ]] || token_dir="${arg#type=bind,\"src=}"
+  done
+  token_dir="${token_dir%\",\"dst=/run/secrets/gcloud\",readonly}"
+}
+gcloud_token_dir
 [[ -n "$token_dir" && "$(cat "$token_dir/token")" == fake-token ]] || fail 'token not mounted'
 [[ "$(stat -c %a "$(dirname "$token_dir")")" == 700 ]] || fail 'token directory not private'
 assert_arg "type=bind,\"src=$token_dir\",\"dst=/run/secrets/gcloud\",readonly"
@@ -245,6 +250,23 @@ rm "$fixture/hold"
 wait "$sandbox" || fail 'launcher failed'
 wait_for test ! -e "$token_dir" || fail 'token left behind after the sandbox quit'
 echo 'PASS: gcloud token deleted when the sandbox quits'
+
+# The launcher's parent execs sleep, which never reaps it, so the exited
+# docker run stays a zombie
+rm -f "$DOCKERSAND_ARGS_FILE"
+touch "$fixture/hold"
+(cd "$repo" && DOCKERSAND_GIT_STRATEGY=mount DOCKERSAND_GCLOUD=1 FAKE_DOCKER_HOLD="$fixture/hold" \
+  exec bash -c '"$0" test env & exec sleep 60' "$launcher") 2>"$fixture/stderr" &
+parent=$!
+wait_for test -s "$DOCKERSAND_ARGS_FILE" || { cat "$fixture/stderr" >&2; fail 'launcher did not start'; }
+mapfile -d '' -t args <"$DOCKERSAND_ARGS_FILE"
+gcloud_token_dir
+[[ -n "$token_dir" ]] || fail 'token not mounted'
+rm "$fixture/hold"
+wait_for test ! -e "$token_dir" || fail 'token left behind while the sandbox is a zombie'
+kill "$parent"
+wait "$parent" 2>/dev/null || true
+echo 'PASS: gcloud token deleted when the sandbox quits unreaped'
 
 if (cd "$repo" && DOCKERSAND_GIT_STRATEGY=mount DOCKERSAND_GCLOUD=1 FAKE_GCLOUD_FAIL=1 \
   "$launcher" test env) 2>/dev/null; then
