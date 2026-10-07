@@ -191,6 +191,26 @@ wait "$sandbox" || fail 'launcher failed'
 wait_for test ! -e "$token_dir" || fail 'token left behind after the sandbox quit'
 echo 'PASS: gcloud token deleted when the sandbox quits'
 
+# The launcher's parent execs sleep, which never reaps it, so the exited
+# docker run stays a zombie
+rm -f "$DOCKERSAND_ARGS_FILE"
+touch "$fixture/hold"
+(cd "$repo" && DOCKERSAND_GIT_STRATEGY=mount DOCKERSAND_GCLOUD=1 FAKE_DOCKER_HOLD="$fixture/hold" \
+  exec bash -c '"$0" test env & exec sleep 60' "$launcher") 2>"$fixture/stderr" &
+parent=$!
+wait_for test -s "$DOCKERSAND_ARGS_FILE" || { cat "$fixture/stderr" >&2; fail 'launcher did not start'; }
+mapfile -d '' -t args <"$DOCKERSAND_ARGS_FILE"
+token_dir=""
+for arg in "${args[@]}"; do
+  [[ "$arg" != *:/run/secrets/gcloud:ro ]] || token_dir="${arg%:/run/secrets/gcloud:ro}"
+done
+[[ -n "$token_dir" ]] || fail 'token not mounted'
+rm "$fixture/hold"
+wait_for test ! -e "$token_dir" || fail 'token left behind while the sandbox is a zombie'
+kill "$parent"
+wait "$parent" 2>/dev/null || true
+echo 'PASS: gcloud token deleted when the sandbox quits unreaped'
+
 if (cd "$repo" && DOCKERSAND_GIT_STRATEGY=mount DOCKERSAND_GCLOUD=1 FAKE_GCLOUD_FAIL=1 \
   "$launcher" test env) 2>/dev/null; then
   fail 'launched without a gcloud token'

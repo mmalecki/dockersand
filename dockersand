@@ -210,12 +210,16 @@ if [[ "${DOCKERSAND_GCLOUD:-}" == 1 ]]; then
   # its cached token, which may be most of the way to expiry, until under 3m45s
   # remain, so ask every 2 minutes; mostly that's a cache hit. exec keeps
   # this PID for docker run, so the refresher stops, and deletes the token, as
-  # soon as the sandbox quits. The start time guards against PID reuse.
+  # soon as the sandbox quits. The start time guards against PID reuse. A
+  # zombie has quit too, though it keeps its /proc entry until its parent reaps
+  # it, which a parent that doesn't wait never does.
   proc_start() {
     local stat fields
     stat="$(<"/proc/$1/stat")" || return
-    # Fields after the parenthesized command name; starttime is field 22
+    # Fields after the parenthesized command name; state is field 3, starttime
+    # field 22
     read -ra fields <<<"${stat##*) }"
+    [[ "${fields[0]}" != Z ]] || return
     echo "${fields[19]}"
   }
   sandbox_pid=$$
