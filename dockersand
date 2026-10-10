@@ -103,13 +103,12 @@ if [[ "$git_strategy" == clone ]]; then
     echo "session $session is already running (container $container_name)" >&2
     exit 1
   fi
-  echo "session $session, resume with: DOCKERSAND_GIT_STRATEGY=clone DOCKERSAND_SESSION_NAME=$session dockersand $app" >&2
+  echo "session $session, resume with: DOCKERSAND_SESSION_NAME=$session dockersand $app" >&2
   # The whole of ~/repos is mounted, with the clone in it, so that worktrees
   # the sandbox creates next to the clone (../<name>) persist too
   repos="$state/repos/$checkout_name/$session"
   clone="$repos/$repo_dir"
   if [[ ! -d "$clone" ]]; then
-    echo "cloning $repo into $clone..." >&2
     mkdir -p "$repos"
     # Outside $repos, so an interrupted clone doesn't show up in the sandbox
     tmp="$(mktemp -d "$state/clone.tmp.XXXXXX")"
@@ -142,7 +141,6 @@ if [[ "$git_strategy" == clone ]]; then
   [[ -d "$clone/$subdir" ]] || subdir=""
   mount_src="$repos"
   mount_dst="/home/work/repos"
-  echo "working in $clone" >&2
   echo "fetch from it with: git fetch $clone <branch>" >&2
   echo "never run git under $repos on the host: hooks and config there are sandbox-controlled" >&2
   sandbox_name=(--name "$container_name")
