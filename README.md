@@ -3,7 +3,9 @@
 `dockersand` wraps Docker and gVisor, creating lightweight sandboxes
 for your trusted-ish workloads, such as well-meaning LLM agents.
 It prevents them from accessing files outside the current project,
-devices and (optionally) network resources.
+devices and (optionally) network resources, while providing enough
+integrations around commonly used tooling (SSH, gcloud, Docker-in-Docker), that
+working in a Docker container doesn't feel frustrating.
 
 It's like pocket sand - it certainly won't stop anyone, but it'll definitely maybe slow them down.
 
@@ -149,19 +151,41 @@ If `DOCKERSAND_SSH` is `1` but `SSH_AUTH_SOCK` is not set, no agent socket is fo
 DOCKERSAND_SSH=1 dockersand <app> [args...]
 ```
 
+### Egress filtering
+
+`DOCKERSAND_EGRESS=1` enables egress filtering by creating the sandbox in a network with no route to the outside, except
+through a Squid HTTP + SSH proxy. A running egress proxy (with an example Docker Compose setup in [`egress-proxy`](./egress-proxy/))
+is required:
+
+```sh
+cd egress-proxy
+docker compose up -d
+DOCKERSAND_EGRESS=1 dockersand <app> [args...]
+```
+
+The `squid.permissive.conf` file in that directory is the default - it enables access to everything except your private
+network and the host.
+`squid.conf`, on the other hand, only enables traffic to major inference providers, GitHub, npm and PyPI. It will most
+likely require adjustment to fit your specific use-case.
+
+It is also possible to allow access to inference provider running on the host, as `host.docker.internal`, by
+uncommenting `http_access allow host_services` rules in configuration, but
+keep in mind that your host's firewall will treat this traffic like any other,
+so you may need to open up some ports.
+
 ### gcloud
 
 The `agents` base image includes the Google Cloud CLI. Set `DOCKERSAND_GCLOUD=1` to authenticate it with an access token
-from the host's `gcloud auth print-access-token`, which expires after an hour, and to pass in the host's default project as
-`CLOUDSDK_CORE_PROJECT`. `~/.config/gcloud` is not mounted, so the sandbox never sees your refresh tokens or account name.
-The launch fails if the host has no `gcloud` or can't print a token.
+from the host's `gcloud auth print-access-token`, and to pass in the host's default project as `CLOUDSDK_CORE_PROJECT`.
+`~/.config/gcloud` is not mounted, so the sandbox never sees your refresh tokens or account name. The launch fails if
+the host has no `gcloud` or can't print a token.
 
 ```sh
 DOCKERSAND_GCLOUD=1 dockersand <app> [args...]
 ```
 
 While the sandbox runs, a background process on the host asks gcloud for the token every 2 minutes. Usually that returns
-gcloud's cached token, which it renews once under 3m45s of its hour remain. The process stops and deletes the
+gcloud's cached token, which it renews once under ~4 minutes of its hour remain. The process stops and deletes the
 token as soon as the sandbox quits, and also stops if a refresh fails, after which gcloud in the sandbox loses access
 within the hour. Tokens are kept in `$XDG_RUNTIME_DIR/dockersand` (or `~/.local/state/dockersand`). With
 `DOCKERSAND_EGRESS=1`, `squid.conf` also needs to allow `.googleapis.com`.
@@ -179,26 +203,6 @@ DOCKERSAND_HOST_GATEWAY= dockersand <app> [args...]
 Omitting the name doesn't block access to the host: the sandbox can still reach it by the gateway IP. Only egress
 filtering does that. With `DOCKERSAND_EGRESS=1`, this variable is ignored, as the sandbox reaches the host through
 the proxy (see below).
-
-### Egress filtering
-
-`DOCKERSAND_EGRESS=1` enables egress filtering by creating the sandbox in a network with no route to the outside, except
-through a Squid HTTP + SSH proxy. A running egress proxy (with an example Docker Compose setup in [`egress-proxy`](./egress-proxy/))
-is required:
-
-```sh
-cd egress-proxy
-docker compose up -d
-DOCKERSAND_EGRESS=1 dockersand <app> [args...]
-```
-
-The `squid.conf` file in that directory enables traffic to major inference providers, GitHub, npm and PyPI, but it
-should be adjusted to fit your specific use-case.
-
-It is also possible to allow access to inference provider running on the host, as `host.docker.internal`, by
-uncommenting `http_access allow host_services` rules in `squid.conf`, but
-keep in mind that your host's firewall will treat this traffic like any other,
-so you may need to open up some ports.
 
 ## Alternatives
 There are scores of us, dozens even! If you are looking for agent isolation
