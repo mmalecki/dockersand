@@ -234,6 +234,22 @@ if [[ "${DOCKERSAND_GCLOUD:-}" == 1 ]]; then
   ) </dev/null >/dev/null 2>&1 &
 fi
 
+# DOCKERSAND_GH=1: the host's token for gh, not ~/.config/gh.
+# gh's OAuth tokens don't expire, so it's read once, at launch.
+if [[ "${DOCKERSAND_GH:-}" == 1 ]]; then
+  if ! command -v gh >/dev/null; then
+    echo "DOCKERSAND_GH=1 needs gh on the host" >&2
+    exit 1
+  fi
+  if ! GH_TOKEN="$(gh auth token)" || [[ -z "$GH_TOKEN" ]]; then
+    echo "gh auth token failed; run gh auth login on the host" >&2
+    exit 1
+  fi
+  # Passed by name, so the token stays out of docker run's argv
+  export GH_TOKEN
+  sandbox_args+=(-e GH_TOKEN)
+fi
+
 # Forward the session bus only when requested. D-Bus addresses escape path
 # bytes and may contain multiple transports; select a usable filesystem socket.
 if [[ "${DOCKERSAND_DBUS:-}" == 1 ]]; then

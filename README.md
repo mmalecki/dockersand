@@ -191,6 +191,20 @@ token as soon as the sandbox quits, and also stops if a refresh fails, after whi
 within the hour. Tokens are kept in `$XDG_RUNTIME_DIR/dockersand` (or `~/.local/state/dockersand`). With
 `DOCKERSAND_EGRESS=1`, `squid.conf` also needs to allow `.googleapis.com`.
 
+### GitHub CLI
+
+The `agents` base image includes the GitHub CLI. Set `DOCKERSAND_GH=1` to pass the host's token, from `gh auth token`,
+into the sandbox as `GH_TOKEN`. `~/.config/gh` is not mounted. The launch fails if the host has no `gh` or isn't
+logged in.
+
+```sh
+DOCKERSAND_GH=1 dockersand <app> [args...]
+```
+
+The token is read once, at launch, so changes to the host's login, such as `gh auth switch`, reach the sandbox on its
+next launch. It carries every scope of your host login, and the sandbox can read it, so it stays usable after the
+sandbox quits, until you revoke it.
+
 ### Session D-Bus forwarding
 
 Set `DOCKERSAND_DBUS=1` to let the sandbox use your host session bus:
