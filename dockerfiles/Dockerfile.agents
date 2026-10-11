@@ -48,6 +48,14 @@ RUN if [ "$YQ_VERSION" = latest ]; then yq_path=latest/download; else yq_path="d
     "https://github.com/mikefarah/yq/releases/$yq_path/yq_linux_$(dpkg --print-architecture)" \
  && chmod +x /usr/local/bin/yq
 
+ARG TERRAFORM_VERSION=v1.16.5
+RUN terraform_version="${TERRAFORM_VERSION#v}" \
+ && curl -fsSL -o /tmp/terraform.zip \
+    "https://releases.hashicorp.com/terraform/${terraform_version}/terraform_${terraform_version}_linux_$(dpkg --print-architecture).zip" \
+ && unzip /tmp/terraform.zip terraform -d /usr/local/bin \
+ && rm /tmp/terraform.zip \
+ && chmod 755 /usr/local/bin/terraform
+
 RUN groupadd work
 RUN useradd -m work -g work
 # useradd allocates subordinate IDs for rootless containers by default.
