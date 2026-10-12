@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -e
+
+# Otherwise docker creates these as root-owned directories
+mkdir -p "$HOME/.pi"
+
+printf '%s\n' \
+  -v "$HOME/.pi:/home/work/.pi"
