@@ -56,6 +56,11 @@ RUN terraform_version="${TERRAFORM_VERSION#v}" \
  && rm /tmp/terraform.zip \
  && chmod 755 /usr/local/bin/terraform
 
+ARG UV_VERSION=latest
+RUN if [ "$UV_VERSION" = latest ]; then uv_path=uv; else uv_path="uv/$UV_VERSION"; fi \
+ && curl -fsSL "https://astral.sh/$uv_path/install.sh" \
+  | env UV_INSTALL_DIR=/usr/local/bin UV_NO_MODIFY_PATH=1 sh
+
 ARG WORK_UID=1000
 RUN groupadd work
 RUN useradd --uid "$WORK_UID" -m work -g work
@@ -72,11 +77,13 @@ RUN curl -fsSL https://fnm.vercel.app/install | bash -s -- --install-dir "$FNM_D
  && "$FNM_DIR/fnm" default "$NODE_VERSION"
 
 ARG RUST_VERSION=1.99
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain="$RUST_VERSION"
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain="$RUST_VERSION" \
+    --target wasm32-unknown-unknown
 
 ENV PATH="$FNM_DIR:$FNM_DIR/aliases/default/bin:/home/work/.npm/bin:/home/work/.cargo/bin:$PATH"
 
-RUN cargo install espup --locked
+RUN cargo install espup wasm-pack --locked \
+ && rm -rf /home/work/.cargo/registry /home/work/.cargo/git
 RUN espup install
 
 RUN npm config set prefix "/home/work/.npm"
