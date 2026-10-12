@@ -31,3 +31,6 @@ jobs:
 
       - name: Test launcher
         run: bash tests/launcher.sh
+
+      - name: Test D-Bus forwarding
+        run: bash tests/dbus.sh

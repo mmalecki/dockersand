@@ -12,7 +12,7 @@ export FAKE_GCLOUD_TOKEN_FILE="$fixture/gcloud-token"
 unset GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL
 unset GIT_AUTHOR_DATE GIT_COMMITTER_DATE EMAIL GIT_CONFIG_COUNT
 unset DOCKERSAND_DIND DOCKERSAND_EGRESS DOCKERSAND_SESSION_NAME DOCKERSAND_SSH
-unset DOCKERSAND_GCLOUD XDG_RUNTIME_DIR
+unset DOCKERSAND_GCLOUD DOCKERSAND_GH GH_TOKEN XDG_RUNTIME_DIR
 unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR
 
 # Capture the actual docker run argv; no daemon is needed for these tests.
@@ -20,6 +20,7 @@ cat >"$fixture/bin/docker" <<'EOF'
 #!/usr/bin/env bash
 if [[ "$1" == run ]]; then
   printf '%s\0' "$@" >"$DOCKERSAND_ARGS_FILE"
+  printf '%s' "${GH_TOKEN-unset}" >"$DOCKERSAND_ARGS_FILE.gh-token"
   # Stay up, as a sandbox would, until the test removes the hold file
   while [[ -n "${FAKE_DOCKER_HOLD:-}" && -e "$FAKE_DOCKER_HOLD" ]]; do sleep 0.2; done
   exit 0
@@ -35,7 +36,12 @@ case "$*" in
   *) exit 1 ;;
 esac
 EOF
-chmod +x "$fixture/bin/docker" "$fixture/bin/gcloud"
+cat >"$fixture/bin/gh" <<'EOF'
+#!/usr/bin/env bash
+[[ -z "${FAKE_GH_FAIL:-}" && "$*" == "auth token" ]] || exit 1
+echo gho_fake
+EOF
+chmod +x "$fixture/bin/docker" "$fixture/bin/gcloud" "$fixture/bin/gh"
 export PATH="$fixture/bin:$PATH"
 git -C "$repo" init -q
 git -C "$repo" -c user.name=Fixture -c user.email=fixture@example.test \
@@ -199,6 +205,26 @@ for dir in "$XDG_STATE_HOME"/dockersand/gcloud.*; do
   [[ ! -e "$dir" ]] || fail "token directory left behind: $dir"
 done
 echo 'PASS: gcloud token failure prevents launch'
+
+run_sandbox
+assert_no_arg GH_TOKEN
+[[ "$(<"$DOCKERSAND_ARGS_FILE.gh-token")" == unset ]] || fail 'gh token passed without DOCKERSAND_GH'
+
+run_sandbox DOCKERSAND_GH=1
+assert_arg GH_TOKEN
+for arg in "${args[@]}"; do
+  [[ "$arg" != *gho_fake* ]] || fail 'gh token in docker run arguments'
+done
+[[ "$(<"$DOCKERSAND_ARGS_FILE.gh-token")" == gho_fake ]] || fail 'gh token not passed to docker'
+echo 'PASS: opt-in gh token forwarding'
+
+rm -f "$DOCKERSAND_ARGS_FILE"
+if (cd "$repo" && DOCKERSAND_GIT_STRATEGY=mount DOCKERSAND_GH=1 FAKE_GH_FAIL=1 \
+  "$launcher" test env) 2>/dev/null; then
+  fail 'launched without a gh token'
+fi
+[[ ! -e "$DOCKERSAND_ARGS_FILE" ]] || fail 'docker run called without a gh token'
+echo 'PASS: gh token failure prevents launch'
 
 : >"$GIT_CONFIG_GLOBAL"
 git config --global user.useConfigOnly true
