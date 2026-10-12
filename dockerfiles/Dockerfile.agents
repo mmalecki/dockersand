@@ -76,6 +76,9 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --de
 
 ENV PATH="$FNM_DIR:$FNM_DIR/aliases/default/bin:/home/work/.npm/bin:/home/work/.cargo/bin:$PATH"
 
+RUN cargo install espup --locked
+RUN espup install
+
 RUN npm config set prefix "/home/work/.npm"
 
 RUN npm -g install chrome-devtools-mcp
