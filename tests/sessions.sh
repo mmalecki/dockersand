@@ -87,25 +87,31 @@ echo 'PASS: saved sessions across checkouts, hidden names, spaces, and ignored s
 
 name=dockersand-project-a1b2c3d4-shared
 printf '%s\n' unrelated-container "$name" >"$MOCK_DOCKER_ROOT/names"
-printf 'legacy\nrunning\n"bash" "-lc" "echo hello world; echo \\"quoted\\""\n' >"$MOCK_DOCKER_ROOT/$name.inspect"
+printf 'shared\n%s\nrunning\n"bash" "-lc" "echo hello world; echo \\"quoted\\""\n' "$root/project-a1b2c3d4/shared" >"$MOCK_DOCKER_ROOT/$name.inspect"
 run_list
 assert_success
 assert_row shared running "$root/project-a1b2c3d4/shared" '"bash" "-lc" "echo hello world; echo \"quoted\""'
-echo 'PASS: legacy containers show resolved executable and quoted arguments'
+echo 'PASS: running containers show resolved executable and quoted arguments'
 
-printf 'labelled\nshared\n%s\npaused\n"codex" "--help"\n' "$root/project-a1b2c3d4/shared" >"$MOCK_DOCKER_ROOT/$name.inspect"
+printf 'shared\n%s\npaused\n"codex" "--help"\n' "$root/project-a1b2c3d4/shared" >"$MOCK_DOCKER_ROOT/$name.inspect"
 run_list
 assert_success
 assert_row shared paused "$root/project-a1b2c3d4/shared" '"codex" "--help"'
-echo 'PASS: labelled sessions use Docker lifecycle states'
+echo 'PASS: sessions use Docker lifecycle states'
 
-printf 'labelled\nshared\n%s\nrunning\n"wrong-command"\n' "$fixture/different-state/shared" >"$MOCK_DOCKER_ROOT/$name.inspect"
+printf 'shared\n%s\nrunning\n"wrong-command"\n' "$fixture/different-state/shared" >"$MOCK_DOCKER_ROOT/$name.inspect"
 run_list
 assert_success
 assert_row shared idle "$root/project-a1b2c3d4/shared" —
 echo 'PASS: containers labelled for another state directory are excluded'
 
-printf 'legacy\nexited\n"old-command"\n' >"$MOCK_DOCKER_ROOT/$name.inspect"
+printf '\n\nrunning\n"unlabelled-command"\n' >"$MOCK_DOCKER_ROOT/$name.inspect"
+run_list
+assert_success
+assert_row shared idle "$root/project-a1b2c3d4/shared" —
+echo 'PASS: unlabelled containers are excluded'
+
+printf 'shared\n%s\nexited\n"old-command"\n' "$root/project-a1b2c3d4/shared" >"$MOCK_DOCKER_ROOT/$name.inspect"
 run_list
 assert_success
 assert_row shared exited "$root/project-a1b2c3d4/shared" —
