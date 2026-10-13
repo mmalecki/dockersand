@@ -82,9 +82,8 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --de
 
 ENV PATH="$FNM_DIR:$FNM_DIR/aliases/default/bin:/home/work/.npm/bin:/home/work/.cargo/bin:$PATH"
 
-RUN cargo install espup wasm-pack --locked \
+RUN cargo install wasm-pack --locked \
  && rm -rf /home/work/.cargo/registry /home/work/.cargo/git
-RUN espup install
 
 RUN npm config set prefix "/home/work/.npm"
 
