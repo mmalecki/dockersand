@@ -157,6 +157,7 @@ It uses the `vfs` storage driver for compatibility with nested filesystems. Imag
 last for the sandbox's lifetime; Docker does not use the host daemon or its socket. Publish nested ports
 with `docker run -p` to reach them from the agent inside the sandbox. Rootless cgroup resource limits are
 unavailable without a user systemd session. Startup logs are at `/home/work/.docker/run/dockerd.log`.
+The sandbox runs under `docker run --init`, so the backgrounded daemon and other orphans are reaped.
 
 ### Entrypoint override
 

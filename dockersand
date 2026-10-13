@@ -452,7 +452,8 @@ fi
 tty=(-i)
 [[ -t 0 && -t 1 ]] && tty+=(-t)
 
-exec docker run --rm \
+# --init: PID 1 is otherwise the agent, which doesn't reap orphaned children
+exec docker run --rm --init \
   "--runtime=$sandbox_runtime" \
   "${sandbox_security[@]}" \
   "${sandbox_name[@]}" \

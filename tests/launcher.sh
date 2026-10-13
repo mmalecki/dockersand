@@ -99,6 +99,7 @@ git config --global user.email global@example.test
 run_sandbox
 assert_identity 'Global Name' global@example.test
 assert_arg --runtime=runsc
+assert_arg --init
 assert_arg no-new-privileges
 assert_no_arg SYS_ADMIN
 assert_no_arg DOCKERSAND_DIND=1
@@ -199,6 +200,7 @@ echo 'PASS: conditional identity from a linked worktree'
 
 run_sandbox DOCKERSAND_DIND=1
 assert_arg --runtime=runc
+assert_arg --init
 assert_arg SYS_ADMIN
 assert_arg seccomp=unconfined
 assert_arg apparmor=unconfined
