@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
 set -e
 
-# Otherwise docker creates these as root-owned directories
+# --mount is parsed as CSV: quote each field, doubling any '"'
+bind() { printf 'type=bind,"src=%s","dst=%s"' "${1//\"/\"\"}" "${2//\"/\"\"}"; }
+
+# --mount needs these to exist; -v used to create them root-owned
 mkdir -p \
   "$HOME/.config/opencode" \
   "$HOME/.local/share/opencode" \
   "$HOME/.local/state/opencode"
 
 printf '%s\n' \
-  -v "$HOME/.config/opencode:/home/work/.config/opencode" \
-  -v "$HOME/.local/share/opencode:/home/work/.local/share/opencode" \
-  -v "$HOME/.local/state/opencode:/home/work/.local/state/opencode"
+  --mount "$(bind "$HOME/.config/opencode" /home/work/.config/opencode)" \
+  --mount "$(bind "$HOME/.local/share/opencode" /home/work/.local/share/opencode)" \
+  --mount "$(bind "$HOME/.local/state/opencode" /home/work/.local/state/opencode)"

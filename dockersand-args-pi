@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 set -e
 
-# Otherwise docker creates these as root-owned directories
+# --mount is parsed as CSV: quote each field, doubling any '"'
+bind() { printf 'type=bind,"src=%s","dst=%s"' "${1//\"/\"\"}" "${2//\"/\"\"}"; }
+
+# --mount needs this to exist; -v used to create it root-owned
 mkdir -p "$HOME/.pi"
 
 printf '%s\n' \
-  -v "$HOME/.pi:/home/work/.pi"
+  --mount "$(bind "$HOME/.pi" /home/work/.pi)"

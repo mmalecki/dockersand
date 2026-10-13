@@ -99,6 +99,7 @@ git config --global user.email global@example.test
 run_sandbox
 assert_identity 'Global Name' global@example.test
 assert_arg --runtime=runsc
+assert_arg --init
 assert_arg no-new-privileges
 assert_no_arg SYS_ADMIN
 assert_no_arg DOCKERSAND_DIND=1
@@ -127,6 +128,36 @@ mapfile -d '' -t args <"$DOCKERSAND_ARGS_FILE"
 mapfile -d '' -t args <"$DOCKERSAND_ARGS_FILE"
 [[ "${args[-3]}" == test && "${args[-2]}" == --sessions && "${args[-1]}" == list ]] || fail 'image arguments were parsed as management'
 echo 'PASS: session management preserves image names and arguments'
+
+# A repo-planted hook for a registry-path image must not run on the host
+mkdir -p "$repo/dockersand-args-ghcr.io/acme"
+printf '#!/usr/bin/env bash\ntouch "%s"\n' "$fixture/hook-marker" >"$repo/dockersand-args-ghcr.io/acme/tool"
+chmod +x "$repo/dockersand-args-ghcr.io/acme/tool"
+rm -f "$DOCKERSAND_ARGS_FILE"
+(cd "$repo" && DOCKERSAND_GIT_STRATEGY=mount "$launcher" ghcr.io/acme/tool) 2>"$fixture/stderr" ||
+  { cat "$fixture/stderr" >&2; fail 'registry-path launch failed'; }
+[[ ! -e "$fixture/hook-marker" ]] || fail 'repo-controlled hook ran on the host'
+[[ -s "$DOCKERSAND_ARGS_FILE" ]] || fail 'docker run not called for registry-path image'
+rm -rf "$repo/dockersand-args-ghcr.io"
+echo 'PASS: registry-path images do not run repo-controlled hooks'
+
+# Hooks for slash-free app names are still found on PATH
+printf '#!/usr/bin/env bash\nprintf "%%s\\n" -e HOOK_RAN=1\n' >"$fixture/bin/dockersand-args-test"
+chmod +x "$fixture/bin/dockersand-args-test"
+run_sandbox
+rm -f "$fixture/bin/dockersand-args-test"
+assert_arg HOOK_RAN=1
+echo 'PASS: PATH hooks run for bare app names'
+
+for bad in "--privileged alpine" "-- --privileged alpine"; do
+  rm -f "$DOCKERSAND_ARGS_FILE"
+  # shellcheck disable=SC2086
+  if (cd "$repo" && DOCKERSAND_GIT_STRATEGY=mount "$launcher" $bad) 2>/dev/null; then
+    fail "launched with option-like app: $bad"
+  fi
+  [[ ! -e "$DOCKERSAND_ARGS_FILE" ]] || fail "docker run called for: $bad"
+done
+echo 'PASS: option-like app names are rejected'
 
 run_sandbox 'GIT_AUTHOR_NAME=Env Author' GIT_AUTHOR_EMAIL=author@example.test \
   'GIT_COMMITTER_NAME=Env Committer' GIT_COMMITTER_EMAIL=committer@example.test \
@@ -169,6 +200,7 @@ echo 'PASS: conditional identity from a linked worktree'
 
 run_sandbox DOCKERSAND_DIND=1
 assert_arg --runtime=runc
+assert_arg --init
 assert_arg SYS_ADMIN
 assert_arg seccomp=unconfined
 assert_arg apparmor=unconfined
@@ -196,10 +228,12 @@ assert_arg CLOUDSDK_AUTH_ACCESS_TOKEN_FILE=/run/secrets/gcloud/token
 assert_arg CLOUDSDK_CORE_PROJECT=fake-project
 token_dir=""
 for arg in "${args[@]}"; do
-  [[ "$arg" != *:/run/secrets/gcloud:ro ]] || token_dir="${arg%:/run/secrets/gcloud:ro}"
+  [[ "$arg" != *'","dst=/run/secrets/gcloud",readonly' ]] || token_dir="${arg#type=bind,\"src=}"
 done
+token_dir="${token_dir%\",\"dst=/run/secrets/gcloud\",readonly}"
 [[ -n "$token_dir" && "$(cat "$token_dir/token")" == fake-token ]] || fail 'token not mounted'
 [[ "$(stat -c %a "$(dirname "$token_dir")")" == 700 ]] || fail 'token directory not private'
+assert_arg "type=bind,\"src=$token_dir\",\"dst=/run/secrets/gcloud\",readonly"
 echo 'PASS: opt-in gcloud token forwarding'
 
 echo refreshed >"$FAKE_GCLOUD_TOKEN_FILE"
@@ -256,3 +290,41 @@ git config --global user.email directory@example.test
 run_sandbox
 assert_identity 'Directory User' directory@example.test
 echo 'PASS: identity outside a git repository'
+
+# Docker splits -v on ':' and parses --mount as CSV, so odd names need quoting
+assert_no_v() {
+  local arg
+  for arg in "${args[@]}"; do
+    [[ "$arg" != -v && "$arg" != -v* ]] || fail "-v form used: $arg"
+  done
+}
+
+weird='we:ird,na"me'
+weird_q='we:ird,na""me'
+repo="$fixture/$weird"
+mkdir -p "$repo"
+git -C "$repo" init -q
+git -C "$repo" -c user.name=Fixture -c user.email=fixture@example.test \
+  commit -q --allow-empty -m initial
+real="$(realpath "$repo")"
+real_q="${real//\"/\"\"}"
+
+run_sandbox
+assert_no_v
+assert_arg --mount
+assert_arg "type=bind,\"src=$real_q\",\"dst=/home/work/repos/$weird_q\""
+echo 'PASS: mount strategy quotes a project directory with : , and "'
+
+run_sandbox DOCKERSAND_GIT_STRATEGY=clone DOCKERSAND_SESSION_NAME=weird
+assert_no_v
+checkout_name="$weird-$(printf %s "$real" | sha256sum | cut -c1-8)"
+assert_arg "type=bind,\"src=${XDG_STATE_HOME//\"/\"\"}/dockersand/repos/${checkout_name//\"/\"\"}/weird\",\"dst=/home/work/repos\""
+echo 'PASS: clone strategy quotes a state directory with : , and "'
+
+mkdir -p "$fixture/home/.ssh"
+touch "$fixture/home/.ssh/known_hosts"
+run_sandbox DOCKERSAND_SSH=1 "HOME=$fixture/home" "SSH_AUTH_SOCK=$fixture/ssh:agent.sock"
+assert_no_v
+assert_arg "type=bind,\"src=$fixture/ssh:agent.sock\",\"dst=/tmp/ssh-agent.sock\""
+assert_arg "type=bind,\"src=$fixture/home/.ssh/known_hosts\",\"dst=/home/work/.ssh/known_hosts\",readonly"
+echo 'PASS: SSH mounts are quoted and known_hosts is read-only'
