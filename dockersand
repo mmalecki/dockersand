@@ -92,6 +92,10 @@ if [[ "${1:-}" == --sessions ]]; then
 fi
 [[ "${1:-}" != -- ]] || shift
 app="${1:?usage: dockersand <app> [args...] | dockersand --sessions list}"
+if [[ "$app" == -* ]]; then
+  echo "invalid app: $app (must not start with -)" >&2
+  exit 1
+fi
 shift
 img="$app"
 subdir=""
@@ -245,7 +249,9 @@ work_dir="/home/work/repos/$repo_dir"
 
 # dockersand-<app> prints one docker arg per line
 sandbox_args=()
-if command -v "dockersand-args-$app" >/dev/null; then
+# command -v searches PATH only for names without a slash; with one it resolves
+# against PWD, so a repo could plant a hook for e.g. ghcr.io/acme/tool
+if [[ "$app" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] && command -v "dockersand-args-$app" >/dev/null; then
   out="$("dockersand-args-$app")"
   [[ -n "$out" ]] && mapfile -t sandbox_args <<<"$out"
 fi

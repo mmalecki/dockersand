@@ -128,6 +128,36 @@ mapfile -d '' -t args <"$DOCKERSAND_ARGS_FILE"
 [[ "${args[-3]}" == test && "${args[-2]}" == --sessions && "${args[-1]}" == list ]] || fail 'image arguments were parsed as management'
 echo 'PASS: session management preserves image names and arguments'
 
+# A repo-planted hook for a registry-path image must not run on the host
+mkdir -p "$repo/dockersand-args-ghcr.io/acme"
+printf '#!/usr/bin/env bash\ntouch "%s"\n' "$fixture/hook-marker" >"$repo/dockersand-args-ghcr.io/acme/tool"
+chmod +x "$repo/dockersand-args-ghcr.io/acme/tool"
+rm -f "$DOCKERSAND_ARGS_FILE"
+(cd "$repo" && DOCKERSAND_GIT_STRATEGY=mount "$launcher" ghcr.io/acme/tool) 2>"$fixture/stderr" ||
+  { cat "$fixture/stderr" >&2; fail 'registry-path launch failed'; }
+[[ ! -e "$fixture/hook-marker" ]] || fail 'repo-controlled hook ran on the host'
+[[ -s "$DOCKERSAND_ARGS_FILE" ]] || fail 'docker run not called for registry-path image'
+rm -rf "$repo/dockersand-args-ghcr.io"
+echo 'PASS: registry-path images do not run repo-controlled hooks'
+
+# Hooks for slash-free app names are still found on PATH
+printf '#!/usr/bin/env bash\nprintf "%%s\\n" -e HOOK_RAN=1\n' >"$fixture/bin/dockersand-args-test"
+chmod +x "$fixture/bin/dockersand-args-test"
+run_sandbox
+rm -f "$fixture/bin/dockersand-args-test"
+assert_arg HOOK_RAN=1
+echo 'PASS: PATH hooks run for bare app names'
+
+for bad in "--privileged alpine" "-- --privileged alpine"; do
+  rm -f "$DOCKERSAND_ARGS_FILE"
+  # shellcheck disable=SC2086
+  if (cd "$repo" && DOCKERSAND_GIT_STRATEGY=mount "$launcher" $bad) 2>/dev/null; then
+    fail "launched with option-like app: $bad"
+  fi
+  [[ ! -e "$DOCKERSAND_ARGS_FILE" ]] || fail "docker run called for: $bad"
+done
+echo 'PASS: option-like app names are rejected'
+
 run_sandbox 'GIT_AUTHOR_NAME=Env Author' GIT_AUTHOR_EMAIL=author@example.test \
   'GIT_COMMITTER_NAME=Env Committer' GIT_COMMITTER_EMAIL=committer@example.test \
   GIT_AUTHOR_DATE='2020-01-01T00:00:00Z' GIT_COMMITTER_DATE='2020-01-01T00:00:00Z'
