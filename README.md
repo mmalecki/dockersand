@@ -99,6 +99,34 @@ plant hooks or config (e.g. `core.fsmonitor`) that your host git later executes.
 linked git worktrees, whose `.git` points outside the mount. Outside a git repository the default is to mount
 the directory (equivalent to `mount`).
 
+### Listing sessions
+
+```sh
+dockersand --sessions list
+```
+
+Lists saved clone sessions across all checkouts, from any directory. Each row shows the session ID, state,
+absolute host sandbox directory, and command. The directory contains the clone and any sibling worktrees;
+sessions with the same ID in different checkouts are distinguished by this path. The state root is
+`${XDG_STATE_HOME:-$HOME/.local/state}/dockersand`.
+
+Live states come from Docker (`running`, `paused`, `restarting`, etc.). The command is the container's
+configured executable and arguments, including the image entrypoint or `DOCKERSAND_ENTRYPOINT` override.
+Arguments are quoted and escaped; this does not track processes subsequently started inside the container.
+Saved sessions without a container show `idle`, and sessions without a live command show `—`.
+If Docker cannot be queried, affected sessions show `unknown`, a diagnostic is printed to stderr, and
+the command exits unsuccessfully. An empty session list prints only the column headers.
+
+Mount-mode sandboxes have no saved session and are not listed. Listing does not run Git inside the saved
+directories, execute app hooks, or start a sandbox.
+
+The `--sessions` flag is recognized only as the first argument. `dockersand sessions list` still launches
+the `sessions` image with `list` as its argument. An optional `--` explicitly begins an image invocation:
+
+```sh
+dockersand -- sessions list
+```
+
 ### Git identity
 
 The sandbox receives `GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL`, `GIT_COMMITTER_NAME`, and `GIT_COMMITTER_EMAIL`
@@ -257,6 +285,7 @@ may be enlightening on the build-vs-buy conundrum.
 ## Tests
 
 Run `bash tests/launcher.sh` to check Git identity resolution and runtime selection without a Docker daemon.
+Run `bash tests/sessions.sh` to check session discovery, live status, and Docker failure handling using a mock Docker command.
 After rebuilding the images, test nested builds, networking and Compose with:
 
 ```sh
