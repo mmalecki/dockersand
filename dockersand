@@ -4,7 +4,94 @@ set -euo pipefail
 # Defence in depth: ignore caller's GIT_DIR etc. so discovery starts from PWD
 unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR
 
-app="${1:?usage: dockersand <app> [args...]}"
+session_container_name() {
+  printf 'dockersand-%s-%s' "$(printf %s "$1" | tr -c 'A-Za-z0-9_.-' _)" "$2"
+}
+
+sessions_list() {
+  local root dir checkout session container_name names details prefix status command
+  local result=0 docker_available=1
+  local -a directories=()
+  root="$(realpath -m "${XDG_STATE_HOME:-$HOME/.local/state}/dockersand/repos")"
+  shopt -s nullglob dotglob
+  for dir in "$root"/*/*; do
+    # Do not follow sandbox-controlled links or inspect Git inside a session.
+    [[ -d "$dir" && ! -L "$dir" && ! -L "${dir%/*}" ]] || continue
+    session="${dir##*/}"
+    [[ "$session" =~ ^[A-Za-z0-9._-]+$ ]] || continue
+    directories+=("$dir")
+  done
+
+  printf '%-20s %-12s %s\t%s\n' 'SESSION ID' STATE 'SANDBOX DIRECTORY' COMMAND
+  ((${#directories[@]})) || return 0
+  if ! names="$(docker container ls --all --format '{{.Names}}' 2>/dev/null)"; then
+    docker_available=0
+    result=1
+  fi
+  for dir in "${directories[@]}"; do
+    session="${dir##*/}"
+    checkout="${dir%/*}"
+    container_name="$(session_container_name "${checkout##*/}" "$session")"
+    status=idle
+    command=—
+    if (( ! docker_available )); then
+      status=unknown
+    elif [[ $'\n'"$names"$'\n' == *$'\n'"$container_name"$'\n'* ]]; then
+      # Go's %q preserves argument boundaries and escapes terminal controls.
+      # Labels distinguish containers belonging to a different state root;
+      # unlabelled containers retain compatibility with older launchers.
+      if details="$(docker container inspect --format '{{if index .Config.Labels "io.dockersand.directory"}}labelled
+{{index .Config.Labels "io.dockersand.session"}}
+{{index .Config.Labels "io.dockersand.directory"}}
+{{else}}legacy
+{{end}}{{.State.Status}}
+{{printf "%q" .Path}}{{range .Args}} {{printf "%q" .}}{{end}}' "$container_name" 2>/dev/null)"; then
+        prefix="labelled"$'\n'"$session"$'\n'"$dir"$'\n'
+        if [[ "$details" == "$prefix"* ]]; then
+          details="${details#"$prefix"}"
+        elif [[ "$details" == legacy$'\n'* ]]; then
+          details="${details#*$'\n'}"
+        else
+          details=""  # Same container name, but a different session directory.
+        fi
+        if [[ -n "$details" ]]; then
+          status="${details%%$'\n'*}"
+          case "$status" in
+            running | paused | restarting) command="${details#*$'\n'}" ;;
+          esac
+        fi
+      else
+        # --rm may remove a container between listing and inspection. Only
+        # call it idle after another successful query confirms it is gone.
+        if ! names="$(docker container ls --all --format '{{.Names}}' 2>/dev/null)"; then
+          docker_available=0
+          status=unknown
+          result=1
+        elif [[ $'\n'"$names"$'\n' == *$'\n'"$container_name"$'\n'* ]]; then
+          status=unknown
+          result=1
+        fi
+      fi
+    fi
+    printf '%-20s %-12s %q\t%s\n' "$session" "$status" "$dir" "$command"
+  done
+  if (( result )); then
+    echo 'unable to query Docker for some sessions; their states are unknown' >&2
+  fi
+  return "$result"
+}
+
+# Only the first argument selects management; all image arguments pass through.
+if [[ "${1:-}" == --sessions ]]; then
+  if [[ $# == 2 && "$2" == list ]]; then
+    sessions_list
+    exit
+  fi
+  echo 'usage: dockersand --sessions list' >&2
+  exit 1
+fi
+[[ "${1:-}" != -- ]] || shift
+app="${1:?usage: dockersand <app> [args...] | dockersand --sessions list}"
 shift
 img="$app"
 subdir=""
@@ -98,7 +185,7 @@ if [[ "$git_strategy" == clone ]]; then
   checkout_name="$repo_dir-$(printf %s "$(realpath "$repo")" | sha256sum | cut -c1-8)"
   # Docker refuses a second container with the same name, so a session runs
   # in at most one sandbox at a time
-  container_name="dockersand-$(printf %s "$checkout_name" | tr -c 'A-Za-z0-9_.-' _)-$session"
+  container_name="$(session_container_name "$checkout_name" "$session")"
   if docker container inspect "$container_name" >/dev/null 2>&1; then
     echo "session $session is already running (container $container_name)" >&2
     exit 1
@@ -143,7 +230,11 @@ if [[ "$git_strategy" == clone ]]; then
   mount_dst="/home/work/repos"
   echo "fetch from it with: git fetch $clone <branch>" >&2
   echo "never run git under $repos on the host: hooks and config there are sandbox-controlled" >&2
-  sandbox_name=(--name "$container_name")
+  sandbox_name=(
+    --name "$container_name"
+    --label "io.dockersand.session=$session"
+    --label "io.dockersand.directory=$(realpath "$repos")"
+  )
 elif [[ -n "${DOCKERSAND_SESSION_NAME:-}" ]]; then
   echo "DOCKERSAND_SESSION_NAME needs DOCKERSAND_GIT_STRATEGY=clone" >&2
   exit 1

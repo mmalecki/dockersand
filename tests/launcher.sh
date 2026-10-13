@@ -90,6 +90,7 @@ git -C "$repo" config user.name 'Repository Only'
 git -C "$repo" config user.email repository@example.test
 run_sandbox
 assert_identity 'Repository Only' repository@example.test
+assert_no_arg --label
 echo 'PASS: repository-only identity without global config'
 git -C "$repo" config --remove-section user
 
@@ -111,7 +112,21 @@ echo 'PASS: repository config overrides global identity'
 
 run_sandbox DOCKERSAND_GIT_STRATEGY=clone DOCKERSAND_SESSION_NAME=identity
 assert_identity 'Local Name' local@example.test
+assert_arg io.dockersand.session=identity
+checkout_name="$(basename "$repo")-$(printf %s "$(realpath "$repo")" | sha256sum | cut -c1-8)"
+assert_arg "io.dockersand.directory=$XDG_STATE_HOME/dockersand/repos/$checkout_name/identity"
 echo 'PASS: clone strategy uses the host checkout identity'
+
+(cd "$repo" && DOCKERSAND_GIT_STRATEGY=mount "$launcher" sessions list) 2>"$fixture/stderr"
+mapfile -d '' -t args <"$DOCKERSAND_ARGS_FILE"
+[[ "${args[-2]}" == sessions && "${args[-1]}" == list ]] || fail 'sessions image collided with management'
+(cd "$repo" && DOCKERSAND_GIT_STRATEGY=mount "$launcher" -- sessions list) 2>"$fixture/stderr"
+mapfile -d '' -t args <"$DOCKERSAND_ARGS_FILE"
+[[ "${args[-2]}" == sessions && "${args[-1]}" == list ]] || fail 'explicit image invocation failed'
+(cd "$repo" && DOCKERSAND_GIT_STRATEGY=mount "$launcher" test --sessions list) 2>"$fixture/stderr"
+mapfile -d '' -t args <"$DOCKERSAND_ARGS_FILE"
+[[ "${args[-3]}" == test && "${args[-2]}" == --sessions && "${args[-1]}" == list ]] || fail 'image arguments were parsed as management'
+echo 'PASS: session management preserves image names and arguments'
 
 run_sandbox 'GIT_AUTHOR_NAME=Env Author' GIT_AUTHOR_EMAIL=author@example.test \
   'GIT_COMMITTER_NAME=Env Committer' GIT_COMMITTER_EMAIL=committer@example.test \
