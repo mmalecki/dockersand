@@ -81,6 +81,14 @@ sessions_list() {
   return "$result"
 }
 
+# Prints a --mount value for a bind mount. Not -v, which splits on ':' and so
+# breaks on paths containing one. --mount is parsed as CSV: wrapping each field
+# in quotes, with '"' doubled, supports commas, colons and quotes in paths.
+bind_mount() {
+  local src="${1//\"/\"\"}" dst="${2//\"/\"\"}"
+  printf 'type=bind,"src=%s","dst=%s"%s' "$src" "$dst" "${3:+,readonly}"
+}
+
 # Only the first argument selects management; all image arguments pass through.
 if [[ "${1:-}" == --sessions ]]; then
   if [[ $# == 2 && "$2" == list ]]; then
@@ -259,10 +267,10 @@ fi
 # Needs runsc configured with --host-uds=open to connect to host sockets
 if [[ "${DOCKERSAND_SSH:-}" == 1 ]]; then
   if [[ -n "${SSH_AUTH_SOCK:-}" ]]; then
-    sandbox_args+=(-v "$SSH_AUTH_SOCK:/tmp/ssh-agent.sock" -e SSH_AUTH_SOCK=/tmp/ssh-agent.sock)
+    sandbox_args+=(--mount "$(bind_mount "$SSH_AUTH_SOCK" /tmp/ssh-agent.sock)" -e SSH_AUTH_SOCK=/tmp/ssh-agent.sock)
   fi
   if [[ -f "$HOME/.ssh/known_hosts" ]]; then
-    sandbox_args+=(-v "$HOME/.ssh/known_hosts:/home/work/.ssh/known_hosts:ro")
+    sandbox_args+=(--mount "$(bind_mount "$HOME/.ssh/known_hosts" /home/work/.ssh/known_hosts readonly)")
   fi
 fi
 
@@ -294,7 +302,7 @@ if [[ "${DOCKERSAND_GCLOUD:-}" == 1 ]]; then
     exit 1
   fi
   sandbox_args+=(
-    -v "$token_dir:/run/secrets/gcloud:ro"
+    --mount "$(bind_mount "$token_dir" /run/secrets/gcloud readonly)"
     -e CLOUDSDK_AUTH_ACCESS_TOKEN_FILE=/run/secrets/gcloud/token
   )
   if project="$(gcloud config get project 2>/dev/null)" && [[ -n "$project" ]]; then
@@ -377,11 +385,9 @@ if [[ "${DOCKERSAND_DBUS:-}" == 1 ]]; then
     echo "DOCKERSAND_DBUS=1 needs a session bus filesystem socket; set DBUS_SESSION_BUS_ADDRESS=unix:path=/path/to/bus" >&2
     exit 1
   fi
-  # Docker --mount uses CSV fields; quote the source to support commas, spaces
-  # and colons without exposing the rest of the host's runtime directory.
-  dbus_mount_src="${dbus_socket//\"/\"\"}"
+  # Only the socket is mounted, not the rest of the host's runtime directory
   sandbox_args+=(
-    --mount "type=bind,\"src=$dbus_mount_src\",dst=/tmp/dbus-session.sock,readonly"
+    --mount "$(bind_mount "$dbus_socket" /tmp/dbus-session.sock readonly)"
     -e DBUS_SESSION_BUS_ADDRESS=unix:path=/tmp/dbus-session.sock
   )
 fi
@@ -457,7 +463,7 @@ exec docker run --rm --init \
   "--runtime=$sandbox_runtime" \
   "${sandbox_security[@]}" \
   "${sandbox_name[@]}" \
-  -v "$mount_src:$mount_dst" \
+  --mount "$(bind_mount "$mount_src" "$mount_dst")" \
   -w "$work_dir/$subdir" \
   "${sandbox_args[@]}" \
   "${tty[@]}" \

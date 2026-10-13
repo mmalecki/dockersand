@@ -228,10 +228,12 @@ assert_arg CLOUDSDK_AUTH_ACCESS_TOKEN_FILE=/run/secrets/gcloud/token
 assert_arg CLOUDSDK_CORE_PROJECT=fake-project
 token_dir=""
 for arg in "${args[@]}"; do
-  [[ "$arg" != *:/run/secrets/gcloud:ro ]] || token_dir="${arg%:/run/secrets/gcloud:ro}"
+  [[ "$arg" != *'","dst=/run/secrets/gcloud",readonly' ]] || token_dir="${arg#type=bind,\"src=}"
 done
+token_dir="${token_dir%\",\"dst=/run/secrets/gcloud\",readonly}"
 [[ -n "$token_dir" && "$(cat "$token_dir/token")" == fake-token ]] || fail 'token not mounted'
 [[ "$(stat -c %a "$(dirname "$token_dir")")" == 700 ]] || fail 'token directory not private'
+assert_arg "type=bind,\"src=$token_dir\",\"dst=/run/secrets/gcloud\",readonly"
 echo 'PASS: opt-in gcloud token forwarding'
 
 echo refreshed >"$FAKE_GCLOUD_TOKEN_FILE"
@@ -288,3 +290,41 @@ git config --global user.email directory@example.test
 run_sandbox
 assert_identity 'Directory User' directory@example.test
 echo 'PASS: identity outside a git repository'
+
+# Docker splits -v on ':' and parses --mount as CSV, so odd names need quoting
+assert_no_v() {
+  local arg
+  for arg in "${args[@]}"; do
+    [[ "$arg" != -v && "$arg" != -v* ]] || fail "-v form used: $arg"
+  done
+}
+
+weird='we:ird,na"me'
+weird_q='we:ird,na""me'
+repo="$fixture/$weird"
+mkdir -p "$repo"
+git -C "$repo" init -q
+git -C "$repo" -c user.name=Fixture -c user.email=fixture@example.test \
+  commit -q --allow-empty -m initial
+real="$(realpath "$repo")"
+real_q="${real//\"/\"\"}"
+
+run_sandbox
+assert_no_v
+assert_arg --mount
+assert_arg "type=bind,\"src=$real_q\",\"dst=/home/work/repos/$weird_q\""
+echo 'PASS: mount strategy quotes a project directory with : , and "'
+
+run_sandbox DOCKERSAND_GIT_STRATEGY=clone DOCKERSAND_SESSION_NAME=weird
+assert_no_v
+checkout_name="$weird-$(printf %s "$real" | sha256sum | cut -c1-8)"
+assert_arg "type=bind,\"src=${XDG_STATE_HOME//\"/\"\"}/dockersand/repos/${checkout_name//\"/\"\"}/weird\",\"dst=/home/work/repos\""
+echo 'PASS: clone strategy quotes a state directory with : , and "'
+
+mkdir -p "$fixture/home/.ssh"
+touch "$fixture/home/.ssh/known_hosts"
+run_sandbox DOCKERSAND_SSH=1 "HOME=$fixture/home" "SSH_AUTH_SOCK=$fixture/ssh:agent.sock"
+assert_no_v
+assert_arg "type=bind,\"src=$fixture/ssh:agent.sock\",\"dst=/tmp/ssh-agent.sock\""
+assert_arg "type=bind,\"src=$fixture/home/.ssh/known_hosts\",\"dst=/home/work/.ssh/known_hosts\",readonly"
+echo 'PASS: SSH mounts are quoted and known_hosts is read-only'
