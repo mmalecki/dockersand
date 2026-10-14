@@ -8,6 +8,7 @@ on:
       - 'dockersand*'
       - 'tests/**'
       - 'egress-proxy/**'
+      - '.github/workflows/**'
   pull_request:
     paths:
       - '**/*.sh'
@@ -15,6 +16,7 @@ on:
       - 'dockersand*'
       - 'tests/**'
       - 'egress-proxy/**'
+      - '.github/workflows/**'
 
 jobs:
   shellcheck:
