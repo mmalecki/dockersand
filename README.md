@@ -33,7 +33,7 @@ docker build -t opencode -f dockerfiles/Dockerfile.opencode .
 ## Usage
 
 ```sh
-dockersand <app> [app-args...]
+dockersand run <app> [app-args...]
 ```
 
 launches a Docker container from an image tagged `<app>`, mounting the repository (or directory, if
@@ -43,8 +43,8 @@ If you are in a repository subdirectory, it drops you into the same one in the s
 By default (inside a git repository) the sandbox works in a separate clone, so it doesn't see uncommitted changes
 and can't modify your `.git`. Use `DOCKERSAND_GIT_STRATEGY=mount` to work in the checkout directly.
 
-The easiest way to explore the environment (without building anything) is running `dockersand alpine`.
-If you've built the base images, running `dockersand bash` will get you the same environment the agent images run in.
+The easiest way to explore the environment (without building anything) is running `dockersand run alpine`.
+If you've built the base images, running `dockersand run bash` will get you the same environment the agent images run in.
 
 ### Per-repo image
 
@@ -81,7 +81,7 @@ mounting your gitconfig. Resuming a session keeps its existing remote configurat
 The session name is random and printed at startup. Set `DOCKERSAND_SESSION_NAME` to resume a session, or to give a
 new one a memorable name:
 
-    DOCKERSAND_SESSION_NAME=<session> dockersand <app> [args...]
+    DOCKERSAND_SESSION_NAME=<session> dockersand run <app> [args...]
 
 A session runs in at most one sandbox at a time: its container is named after it, and Docker refuses to start a
 second one.
@@ -106,7 +106,7 @@ the directory (equivalent to `mount`).
 ### Listing sessions
 
 ```sh
-dockersand --sessions list
+dockersand sessions list
 ```
 
 Lists saved clone sessions across all checkouts, from any directory. Each row shows the session ID, state,
@@ -127,13 +127,6 @@ the command exits unsuccessfully. An empty session list prints only the column h
 Mount-mode sandboxes have no saved session and are not listed. Listing does not run Git inside the saved
 directories, execute app hooks, or start a sandbox.
 
-The `--sessions` flag is recognized only as the first argument. `dockersand sessions list` still launches
-the `sessions` image with `list` as its argument. An optional `--` explicitly begins an image invocation:
-
-```sh
-dockersand -- sessions list
-```
-
 ### Git identity
 
 The sandbox receives `GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL`, `GIT_COMMITTER_NAME`, and `GIT_COMMITTER_EMAIL`
@@ -151,7 +144,7 @@ retain `runsc` and `no-new-privileges`. The host must support unprivileged user 
 `/dev/net/tun`, which is passed through for userspace networking.
 
 ```sh
-DOCKERSAND_DIND=1 dockersand bash
+DOCKERSAND_DIND=1 dockersand run bash
 # Inside the sandbox:
 docker run --rm hello-world
 docker build -t my-solution .
@@ -171,7 +164,7 @@ The sandbox runs under `docker run --init`, so the backgrounded daemon and other
 `DOCKERSAND_ENTRYPOINT` overrides the image's default entrypoint. Any `[args...]` are passed to the new entrypoint:
 
 ```sh
-DOCKERSAND_ENTRYPOINT=/bin/bash dockersand <app> -l
+DOCKERSAND_ENTRYPOINT=/bin/bash dockersand run <app> -l
 ```
 
 This is useful when debugging per-app hooks, environment setup, etc.
@@ -185,7 +178,7 @@ The `known_hosts` mount is only added when `DOCKERSAND_SSH=1`, since `known_host
 If `DOCKERSAND_SSH` is `1` but `SSH_AUTH_SOCK` is not set, no agent socket is forwarded (no error is raised).
 
 ```sh
-DOCKERSAND_SSH=1 dockersand <app> [args...]
+DOCKERSAND_SSH=1 dockersand run <app> [args...]
 ```
 
 ### Egress filtering
@@ -197,7 +190,7 @@ is required:
 ```sh
 cd egress-proxy
 docker compose up -d
-DOCKERSAND_EGRESS=1 dockersand <app> [args...]
+DOCKERSAND_EGRESS=1 dockersand run <app> [args...]
 ```
 
 The `squid.permissive.conf` file in that directory is the default - it enables access to everything except your private
@@ -233,7 +226,7 @@ from the host's `gcloud auth print-access-token`, and to pass in the host's defa
 the host has no `gcloud` or can't print a token.
 
 ```sh
-DOCKERSAND_GCLOUD=1 dockersand <app> [args...]
+DOCKERSAND_GCLOUD=1 dockersand run <app> [args...]
 ```
 
 While the sandbox runs, a background process on the host asks gcloud for the token every 2 minutes. Usually that returns
@@ -249,7 +242,7 @@ into the sandbox as `GH_TOKEN`. `~/.config/gh` is not mounted. The launch fails 
 logged in.
 
 ```sh
-DOCKERSAND_GH=1 dockersand <app> [args...]
+DOCKERSAND_GH=1 dockersand run <app> [args...]
 ```
 
 The token is read once, at launch, so changes to the host's login, such as `gh auth switch`, reach the sandbox on its
@@ -261,7 +254,7 @@ sandbox quits, until you revoke it.
 Set `DOCKERSAND_DBUS=1` to let the sandbox use your host session bus:
 
 ```sh
-DOCKERSAND_DBUS=1 dockersand bash
+DOCKERSAND_DBUS=1 dockersand run bash
 # Inside an agents-based image:
 notify-send "Agent finished" "The tests passed."
 secret-tool lookup service my-project account deploy
@@ -290,8 +283,8 @@ Without egress filtering, the host is reachable from the sandbox as `host.docker
 inference provider running on the host. `DOCKERSAND_HOST_GATEWAY` changes the name; set it empty to omit it:
 
 ```sh
-DOCKERSAND_HOST_GATEWAY=host.internal dockersand <app> [args...]
-DOCKERSAND_HOST_GATEWAY= dockersand <app> [args...]
+DOCKERSAND_HOST_GATEWAY=host.internal dockersand run <app> [args...]
+DOCKERSAND_HOST_GATEWAY= dockersand run <app> [args...]
 ```
 
 Omitting the name doesn't block access to the host: the sandbox can still reach it by the gateway IP. Only egress
@@ -314,7 +307,7 @@ Run `bash tests/egress.sh` to check proxy availability checks and proxy configur
 After rebuilding the images, test nested builds, networking and Compose with:
 
 ```sh
-DOCKERSAND_GIT_STRATEGY=mount DOCKERSAND_DIND=1 dockersand bash tests/dind.sh
+DOCKERSAND_GIT_STRATEGY=mount DOCKERSAND_DIND=1 dockersand run bash tests/dind.sh
 ```
 
 Run `bash tests/dbus.sh` to check session-bus selection, address parsing, and opt-in behavior. The test uses
