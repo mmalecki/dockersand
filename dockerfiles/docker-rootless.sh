@@ -13,6 +13,9 @@ if [[ "${DOCKERSAND_DIND:-}" != 1 ]]; then
   exit 1
 fi
 
+# Agent subprocesses can replace the image's PATH and omit administration tools.
+export PATH="$PATH:/usr/local/sbin:/usr/sbin:/sbin"
+
 # Start on first use, so derived images can keep their agent entrypoints.
 if ! /usr/bin/docker info >/dev/null 2>&1; then
   mkdir -p "$XDG_RUNTIME_DIR"

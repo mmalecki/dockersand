@@ -79,7 +79,8 @@ RUN curl -fsSL https://fnm.vercel.app/install | bash -s -- --install-dir "$FNM_D
 ARG RUST_VERSION=1.99
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain="$RUST_VERSION"
 
-ENV PATH="$FNM_DIR:$FNM_DIR/aliases/default/bin:/home/work/.npm/bin:/home/work/.cargo/bin:$PATH"
+# Rootless Docker needs administration tools such as sysctl and iptables.
+ENV PATH="$FNM_DIR:$FNM_DIR/aliases/default/bin:/home/work/.npm/bin:/home/work/.cargo/bin:/usr/local/sbin:/usr/sbin:/sbin:$PATH"
 
 RUN npm config set prefix "/home/work/.npm"
 
