@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -e
+
+# Sibling hooks are installed next to this one, not on PATH
+dir="$(cd "$(dirname "$0")" && pwd)"
+"$dir/dockersand-args-claude"
+"$dir/dockersand-args-opencode"
+"$dir/dockersand-args-codex"
+"$dir/dockersand-args-pi"

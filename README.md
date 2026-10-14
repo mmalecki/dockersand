@@ -15,7 +15,21 @@ Prerequisites: [gVisor installed and configured as a Docker runtime](https://gvi
 If you would like to use SSH forwarding, configure runsc with `--host-uds=open`, and set `DOCKERSAND_SSH=1` when running.
 Session D-Bus forwarding also requires `--host-uds=open`.
 
-For now, installation is manual. Drop every `dockersand*` script on your `PATH`.
+For now, installation is manual. Put the `dockersand` script on your `PATH`, and install the per-app hooks from
+`libexec/` into `$prefix/libexec/dockersand` (defaulting to `/usr/local/libexec/dockersand`):
+
+```sh
+sudo install -d -m 755 /usr/local/libexec/dockersand
+sudo install -m 755 -t /usr/local/libexec/dockersand libexec/dockersand-args-*
+```
+
+Hooks print extra `docker run` arguments for their app, which makes them trusted code rather than user
+configuration: the launcher runs hooks only from locations the invoking user cannot write to (every path
+component, not just the hook file: directory write access allows replacing entries by rename and repointing
+symlinks), and skips hooks it finds in user-writable locations. The check is for writability, not ownership,
+so read-only non-root locations like the Nix store also pass. `DOCKERSAND_HOOK_DIR` relocates the hook
+directory — an explicit choice to trust it. A NixOS/home-manager module can point it straight at the
+read-only store path (e.g. `${package}/libexec/dockersand`), which passes the trust check without warnings.
 
 You will also need to build and tag the images you would like to use. The example `Dockerfile`s in `dockerfiles/` are
 `claude`, `codex`, `opencode`, `bash`, and a base image for them all: `agents`. To build the full suite:
@@ -54,7 +68,8 @@ This enables baking custom images per repository, including repository-specific 
 
 ### Per-app hooks
 
-`dockersand-args-*` files are per-app hooks. They are used to pass additional arguments to Docker, allowing mounting
+`dockersand-args-*` files are per-app hooks, resolved from the hook directory (see Installation), never from
+`PATH`. They are used to pass additional arguments to Docker, allowing mounting
 application-specific configuration directories (such as `~/.config/opencode`).
 
 The bundled hooks mount these directories read-write, so the sandbox can

@@ -3,7 +3,15 @@ set -euo pipefail
 
 launcher="$(cd "$(dirname "$0")/.." && pwd)/dockersand"
 fixture="$(mktemp -d)"
-trap 'rm -rf "$fixture"' EXIT
+cleanup() {
+  rm -rf "$fixture"
+  [[ -z "${sudo_hook_installed:-}" ]] || if [[ -n "${preexisting_hook_dir:-}" ]]; then
+    sudo -n rm -f /usr/local/libexec/dockersand/dockersand-args-test 2>/dev/null
+  else
+    sudo -n rm -rf /usr/local/libexec/dockersand 2>/dev/null
+  fi
+}
+trap cleanup EXIT
 mkdir -p "$fixture/bin" "$fixture/repo"
 repo="$fixture/repo"
 export GIT_CONFIG_GLOBAL="$fixture/gitconfig" GIT_CONFIG_NOSYSTEM=1
@@ -12,7 +20,7 @@ export FAKE_GCLOUD_TOKEN_FILE="$fixture/gcloud-token"
 unset GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL
 unset GIT_AUTHOR_DATE GIT_COMMITTER_DATE EMAIL GIT_CONFIG_COUNT
 unset DOCKERSAND_DIND DOCKERSAND_EGRESS DOCKERSAND_SESSION_NAME DOCKERSAND_SSH
-unset DOCKERSAND_GCLOUD DOCKERSAND_GH GH_TOKEN XDG_RUNTIME_DIR
+unset DOCKERSAND_GCLOUD DOCKERSAND_GH GH_TOKEN XDG_RUNTIME_DIR DOCKERSAND_HOOK_DIR
 unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR
 
 # Capture the actual docker run argv; no daemon is needed for these tests.
@@ -159,13 +167,64 @@ rm -f "$DOCKERSAND_ARGS_FILE"
 rm -rf "$repo/dockersand-args-ghcr.io"
 echo 'PASS: registry-path images do not run repo-controlled hooks'
 
-# Hooks for slash-free app names are still found on PATH
-printf '#!/usr/bin/env bash\nprintf "%%s\\n" -e HOOK_RAN=1\n' >"$fixture/bin/dockersand-args-test"
+# Hooks are resolved from the hook directory, never from PATH; a hook found
+# on PATH from an old install produces a migration hint instead
+printf '#!/usr/bin/env bash\nprintf "%%s\\n" -e PATH_HOOK_RAN=1\n' >"$fixture/bin/dockersand-args-test"
 chmod +x "$fixture/bin/dockersand-args-test"
 run_sandbox
 rm -f "$fixture/bin/dockersand-args-test"
+assert_no_arg PATH_HOOK_RAN=1
+rg -Fq 'hooks moved to' "$fixture/stderr" || fail 'missing migration hint for a PATH hook'
+echo 'PASS: PATH hooks are not used, with a migration hint'
+
+# An explicitly given DOCKERSAND_HOOK_DIR is the caller's own assertion of
+# trust: hooks run from it even when it is user-writable, with a notice
+mkdir -p "$fixture/hooks"
+printf '#!/usr/bin/env bash\nprintf "%%s\\n" -e HOOK_RAN=1\n' >"$fixture/hooks/dockersand-args-test"
+chmod +x "$fixture/hooks/dockersand-args-test"
+run_sandbox DOCKERSAND_HOOK_DIR="$fixture/hooks"
+rm -rf "$fixture/hooks"
 assert_arg HOOK_RAN=1
-echo 'PASS: PATH hooks run for bare app names'
+rg -Fq 'user-writable' "$fixture/stderr" || fail 'missing user-writable notice for DOCKERSAND_HOOK_DIR'
+echo 'PASS: DOCKERSAND_HOOK_DIR hooks run, with a notice when user-writable'
+
+# The default hook directory must be outside the invoking user's write-reach
+if sudo -n true 2>/dev/null; then
+  preexisting_hook_dir=0
+  [[ ! -e /usr/local/libexec/dockersand ]] || preexisting_hook_dir=1
+  sudo install -d -m 755 /usr/local/libexec/dockersand
+  printf '#!/usr/bin/env bash\nprintf "%%s\\n" -e ROOT_HOOK_RAN=1\n' >"$fixture/dockersand-args-test"
+  sudo install -m 755 "$fixture/dockersand-args-test" /usr/local/libexec/dockersand/dockersand-args-test
+  sudo_hook_installed=1
+
+  run_sandbox
+  assert_arg ROOT_HOOK_RAN=1
+  rg -Fq 'user-writable' "$fixture/stderr" && fail 'unexpected notice for a root-owned hook'
+  echo 'PASS: root-owned default hook directory is trusted'
+
+  # A user-writable hook in the default directory is never run
+  sudo chmod 777 /usr/local/libexec/dockersand/dockersand-args-test
+  run_sandbox
+  sudo chmod 755 /usr/local/libexec/dockersand/dockersand-args-test
+  assert_no_arg ROOT_HOOK_RAN=1
+  rg -Fq 'skipping hook' "$fixture/stderr" || fail 'untrusted default hook was not skipped loudly'
+  echo 'PASS: user-writable hooks in the default directory are skipped'
+
+  # Trusted explicitly too, without a notice
+  run_sandbox DOCKERSAND_HOOK_DIR=/usr/local/libexec/dockersand
+  assert_arg ROOT_HOOK_RAN=1
+  rg -Fq 'user-writable' "$fixture/stderr" && fail 'unexpected notice for a trusted DOCKERSAND_HOOK_DIR'
+  echo 'PASS: DOCKERSAND_HOOK_DIR pointing at a trusted directory is quiet'
+
+  if ((preexisting_hook_dir)); then
+    sudo rm -f /usr/local/libexec/dockersand/dockersand-args-test
+  else
+    sudo rm -rf /usr/local/libexec/dockersand
+  fi
+  sudo_hook_installed=
+else
+  echo 'SKIP: no passwordless sudo; the default hook directory is not tested'
+fi
 
 for bad in "--privileged alpine" "-- --privileged alpine"; do
   rm -f "$DOCKERSAND_ARGS_FILE"

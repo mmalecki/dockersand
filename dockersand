@@ -6,6 +6,10 @@ unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR
 
 state="${XDG_STATE_HOME:-$HOME/.local/state}/dockersand"
 
+# Per-app hooks live here; see run_hook. DOCKERSAND_HOOK_DIR overrides the
+# default, e.g. for a NixOS module pointing at the read-only store.
+hook_dir="${DOCKERSAND_HOOK_DIR:-/usr/local/libexec/dockersand}"
+
 # Arguments for docker run, collected by run_app and the functions it calls.
 # They also share app, the repo variables that resolve_repo sets, and the
 # mount_src and mount_dst of the project mount.
@@ -253,19 +257,62 @@ prepare_clone() {
   )
 }
 
-# dockersand-args-<app> prints one docker arg per line
+# Whether any path component from $1 up to / is writable by the invoking
+# user. Write access to a directory means control over the names in it:
+# entries can be replaced by renames without being writable themselves,
+# and symlinks can be repointed.
+chain_writable() {
+  local p="$1"
+  while [[ -n "$p" && "$p" != / ]]; do
+    [[ -w "$p" ]] && return 0
+    p="${p%/*}"
+  done
+  return 1
+}
+
+# A hook's output becomes docker run arguments, so a hook must not be under
+# the invoking user's write-reach: neither the file itself nor any directory
+# its path resolves through, as given or after following symlinks. Writability
+# rather than ownership, so root-owned /usr/local and the read-only /nix/store
+# both pass, while ~/.local and a repointable ~/.nix-profile both fail.
+hook_is_trusted() {
+  local resolved
+  resolved="$(realpath -e "$1")" || return 1
+  if chain_writable "$resolved"; then return 1; fi
+  if [[ "$resolved" != "$1" ]] && chain_writable "$1"; then return 1; fi
+  return 0
+}
+
+# Per-app hooks, dockersand-args-<app> in $hook_dir, print one docker argument
+# per line. They are trusted code, not user configuration, so only run when
+# the path to them is outside the invoking user's write-reach.
 run_hook() {
-  local out
+  local hook="$hook_dir/dockersand-args-$app" out
   local -a hook_args
-  # command -v searches PATH only for names without a slash; with one it
-  # resolves against PWD, so a repo could plant a hook for e.g.
-  # ghcr.io/acme/tool
-  if [[ "$app" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] && command -v "dockersand-args-$app" >/dev/null; then
-    out="$("dockersand-args-$app")"
-    if [[ -n "$out" ]]; then
-      mapfile -t hook_args <<<"$out"
-      sandbox_args+=("${hook_args[@]}")
+  # App names with a slash would resolve against PWD, so a repo could plant
+  # a hook for e.g. ghcr.io/acme/tool
+  [[ "$app" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || return 0
+  if [[ ! -x "$hook" ]]; then
+    # Hooks used to be resolved from PATH; help users of old installs
+    if command -v "dockersand-args-$app" >/dev/null; then
+      echo "dockersand-args-$app is on PATH; hooks moved to $hook_dir (see the README installation section)" >&2
     fi
+    return 0
+  fi
+  if ! hook_is_trusted "$hook"; then
+    if [[ -z "${DOCKERSAND_HOOK_DIR+x}" ]]; then
+      # The default location is root's to manage, so a user-writable hook
+      # there is tampering or a misinstall: never run it
+      echo "skipping hook $hook: it is in a user-writable location; see the README installation section" >&2
+      return 0
+    fi
+    # An explicit DOCKERSAND_HOOK_DIR is the caller's own assertion of trust
+    echo "note: hooks under DOCKERSAND_HOOK_DIR=$hook_dir are user-writable" >&2
+  fi
+  out="$("$hook")"
+  if [[ -n "$out" ]]; then
+    mapfile -t hook_args <<<"$out"
+    sandbox_args+=("${hook_args[@]}")
   fi
 }
 
