@@ -52,7 +52,7 @@ export PATH="$fixture/bin:$PATH"
 fail() { echo "FAIL: $*" >&2; exit 1; }
 run_list() {
   list_exit=0
-  (cd "$HOME" && "$launcher" --sessions list) >"$fixture/stdout" 2>"$fixture/stderr" || list_exit=$?
+  (cd "$HOME" && "$launcher" sessions list) >"$fixture/stdout" 2>"$fixture/stderr" || list_exit=$?
 }
 assert_row() {
   local row
@@ -153,12 +153,12 @@ run_list
 assert_row example unknown "$HOME/.local/state/dockersand/repos/default-12345678/example" — —
 echo 'PASS: default state location'
 
-for arguments in '--sessions' '--sessions unknown' '--sessions list extra'; do
+for arguments in 'sessions' 'sessions unknown' 'sessions list extra' '--sessions list'; do
   read -ra argv <<<"$arguments"
   if "$launcher" "${argv[@]}" >"$fixture/stdout" 2>"$fixture/stderr"; then
     fail "accepted invalid management arguments: $arguments"
   fi
-  rg -Fq 'usage: dockersand --sessions list' "$fixture/stderr" || fail 'missing management usage'
+  rg -Fq 'dockersand sessions list' "$fixture/stderr" || fail 'missing management usage'
 done
 [[ ! -e "$MOCK_DOCKER_ROOT/unexpected-launch-setup" ]] || fail 'management ran launch setup'
 echo 'PASS: invalid management commands fail before launch setup'

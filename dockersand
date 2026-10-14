@@ -6,7 +6,7 @@ unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR
 
 state="${XDG_STATE_HOME:-$HOME/.local/state}/dockersand"
 
-# Arguments for docker run, collected by main and the functions it calls.
+# Arguments for docker run, collected by run_app and the functions it calls.
 # They also share app, the repo variables that resolve_repo sets, and the
 # mount_src and mount_dst of the project mount.
 sandbox_args=()
@@ -194,7 +194,7 @@ prepare_clone() {
     echo "session $session is already running (container $container_name)" >&2
     exit 1
   fi
-  echo "session $session, resume with: DOCKERSAND_SESSION_NAME=$session dockersand $app" >&2
+  echo "session $session, resume with: DOCKERSAND_SESSION_NAME=$session dockersand run $app" >&2
   # The whole of ~/repos is mounted, with the clone in it, so that worktrees
   # the sandbox creates next to the clone (../<name>) persist too
   repos="$state/repos/$checkout_name/$session"
@@ -472,20 +472,20 @@ network_args() {
   fi
 }
 
-main() {
+usage() {
+  printf '%s\n' 'usage: dockersand run <app> [args...]' '       dockersand sessions list'
+}
+
+# Launches the sandbox: everything after the app passes through to the image
+run_app() {
   local img strategy work_dir
 
-  # Only the first argument selects management; all image arguments pass through.
-  if [[ "${1:-}" == --sessions ]]; then
-    if [[ $# == 2 && "$2" == list ]]; then
-      sessions_list
-      exit
-    fi
-    echo 'usage: dockersand --sessions list' >&2
+  [[ "${1:-}" != -- ]] || shift
+  if (( ! $# )); then
+    usage >&2
     exit 1
   fi
-  [[ "${1:-}" != -- ]] || shift
-  app="${1:?usage: dockersand <app> [args...] | dockersand --sessions list}"
+  app="$1"
   if [[ "$app" == -* ]]; then
     echo "invalid app: $app (must not start with -)" >&2
     exit 1
@@ -539,6 +539,27 @@ main() {
     -w "$work_dir/$subdir" \
     "${sandbox_args[@]}" \
     "$img" "$@"
+}
+
+main() {
+  case "${1:-}" in
+    run)
+      shift
+      run_app "$@"
+      ;;
+    sessions)
+      if [[ $# == 2 && "$2" == list ]]; then
+        sessions_list
+        exit
+      fi
+      ;;
+    -h | --help)
+      usage
+      exit
+      ;;
+  esac
+  usage >&2
+  exit 1
 }
 
 main "$@"

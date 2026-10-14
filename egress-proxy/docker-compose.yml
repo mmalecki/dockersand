@@ -4,7 +4,7 @@
 # sits on both networks and only forwards to domains allowlisted in squid.conf.
 #
 #   docker compose up -d
-#   DOCKERSAND_EGRESS=1 dockersand <app> [args...]
+#   DOCKERSAND_EGRESS=1 dockersand run <app> [args...]
 
 services:
   dockersand-egress-proxy:

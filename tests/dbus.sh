@@ -53,14 +53,14 @@ chmod +x "$fixture/bin/docker"
 export PATH="$fixture/bin:$PATH"
 
 run_sandbox() {
-  (cd "$fixture/project" && DOCKERSAND_GIT_STRATEGY=mount env "$@" "$launcher" test env) \
+  (cd "$fixture/project" && DOCKERSAND_GIT_STRATEGY=mount env "$@" "$launcher" run test env) \
     2>"$fixture/stderr" || { cat "$fixture/stderr" >&2; fail 'launcher failed'; }
   mapfile -d '' -t args <"$DOCKERSAND_ARGS_FILE"
 }
 
 expect_failure() {
   : >"$DOCKERSAND_ARGS_FILE"
-  if (cd "$fixture/project" && DOCKERSAND_GIT_STRATEGY=mount env DOCKERSAND_DBUS=1 "$@" "$launcher" test env) \
+  if (cd "$fixture/project" && DOCKERSAND_GIT_STRATEGY=mount env DOCKERSAND_DBUS=1 "$@" "$launcher" run test env) \
     2>"$fixture/stderr"; then
     fail 'invalid bus unexpectedly accepted'
   fi

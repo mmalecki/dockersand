@@ -34,7 +34,7 @@ cd "$fixture/project"
 fail() { echo "FAIL: $*" >&2; exit 1; }
 expect_failure() {
   rm -f "$DOCKERSAND_ARGS_FILE"
-  if "$launcher" alpine >"$fixture/stdout" 2>"$fixture/stderr"; then
+  if "$launcher" run alpine >"$fixture/stdout" 2>"$fixture/stderr"; then
     fail 'unavailable proxy accepted'
   fi
   [[ ! -e "$DOCKERSAND_ARGS_FILE" ]] || fail 'docker run called after failed validation'
@@ -49,7 +49,7 @@ expect_failure
 echo 'PASS: filtered launch requires a running, attached proxy'
 
 MOCK_PROXY_IP=172.20.0.2
-"$launcher" alpine 2>"$fixture/stderr"
+"$launcher" run alpine 2>"$fixture/stderr"
 mapfile -d '' -t args <"$DOCKERSAND_ARGS_FILE"
 for expected in dockersand-internal HTTP_PROXY=http://172.20.0.2:3128 HTTPS_PROXY=http://172.20.0.2:3128; do
   found=0
@@ -58,5 +58,5 @@ for expected in dockersand-internal HTTP_PROXY=http://172.20.0.2:3128 HTTPS_PROX
 done
 echo 'PASS: filtered sandbox launches with the proxy configured'
 
-MOCK_PROXY_RUNNING=false DOCKERSAND_EGRESS=0 "$launcher" alpine 2>"$fixture/stderr"
+MOCK_PROXY_RUNNING=false DOCKERSAND_EGRESS=0 "$launcher" run alpine 2>"$fixture/stderr"
 echo 'PASS: ordinary launches do not require the proxy'
