@@ -59,7 +59,7 @@ wait_for() {
 }
 
 run_sandbox() {
-  (cd "$repo" && DOCKERSAND_GIT_STRATEGY=mount env "$@" "$launcher" test env) \
+  (cd "$repo" && DOCKERSAND_GIT_STRATEGY=mount env "$@" "$launcher" run test env) \
     2>"$fixture/stderr" || { cat "$fixture/stderr" >&2; fail "launcher failed"; }
   mapfile -d '' -t args <"$DOCKERSAND_ARGS_FILE"
 }
@@ -118,23 +118,41 @@ checkout_name="$(basename "$repo")-$(printf %s "$(realpath "$repo")" | sha256sum
 assert_arg "io.dockersand.directory=$XDG_STATE_HOME/dockersand/repos/$checkout_name/identity"
 echo 'PASS: clone strategy uses the host checkout identity'
 
-(cd "$repo" && DOCKERSAND_GIT_STRATEGY=mount "$launcher" sessions list) 2>"$fixture/stderr"
+for image in sessions run; do
+  (cd "$repo" && DOCKERSAND_GIT_STRATEGY=mount "$launcher" run "$image" sessions list) 2>"$fixture/stderr" ||
+    { cat "$fixture/stderr" >&2; fail "launching image $image failed"; }
+  mapfile -d '' -t args <"$DOCKERSAND_ARGS_FILE"
+  [[ "${args[-3]}" == "$image" && "${args[-2]}" == sessions && "${args[-1]}" == list ]] ||
+    fail "subcommand names were not passed through for image $image"
+done
+(cd "$repo" && DOCKERSAND_GIT_STRATEGY=mount "$launcher" run -- test -- --flag) 2>"$fixture/stderr" ||
+  { cat "$fixture/stderr" >&2; fail 'run with -- failed'; }
 mapfile -d '' -t args <"$DOCKERSAND_ARGS_FILE"
-[[ "${args[-2]}" == sessions && "${args[-1]}" == list ]] || fail 'sessions image collided with management'
-(cd "$repo" && DOCKERSAND_GIT_STRATEGY=mount "$launcher" -- sessions list) 2>"$fixture/stderr"
-mapfile -d '' -t args <"$DOCKERSAND_ARGS_FILE"
-[[ "${args[-2]}" == sessions && "${args[-1]}" == list ]] || fail 'explicit image invocation failed'
-(cd "$repo" && DOCKERSAND_GIT_STRATEGY=mount "$launcher" test --sessions list) 2>"$fixture/stderr"
-mapfile -d '' -t args <"$DOCKERSAND_ARGS_FILE"
-[[ "${args[-3]}" == test && "${args[-2]}" == --sessions && "${args[-1]}" == list ]] || fail 'image arguments were parsed as management'
-echo 'PASS: session management preserves image names and arguments'
+[[ "${args[-3]}" == test && "${args[-2]}" == -- && "${args[-1]}" == --flag ]] ||
+  fail 'run -- did not pass the app and its arguments through'
+echo 'PASS: run passes subcommand names through as images and arguments, with an optional --'
+
+for arguments in '' test '--sessions list' '-- test' 'run' 'run --'; do
+  read -ra argv <<<"$arguments"
+  rm -f "$DOCKERSAND_ARGS_FILE"
+  if (cd "$repo" && DOCKERSAND_GIT_STRATEGY=mount "$launcher" "${argv[@]}") >/dev/null 2>"$fixture/stderr"; then
+    fail "accepted invalid arguments: $arguments"
+  fi
+  rg -Fq 'usage: dockersand run <app>' "$fixture/stderr" || fail "missing usage for: $arguments"
+  [[ ! -e "$DOCKERSAND_ARGS_FILE" ]] || fail "docker run called for: $arguments"
+done
+for help in -h --help; do
+  "$launcher" "$help" >"$fixture/stdout" || fail "$help failed"
+  rg -Fq 'usage: dockersand run <app>' "$fixture/stdout" || fail "$help did not print usage"
+done
+echo 'PASS: bare apps and unknown subcommands print usage without launching'
 
 # A repo-planted hook for a registry-path image must not run on the host
 mkdir -p "$repo/dockersand-args-ghcr.io/acme"
 printf '#!/usr/bin/env bash\ntouch "%s"\n' "$fixture/hook-marker" >"$repo/dockersand-args-ghcr.io/acme/tool"
 chmod +x "$repo/dockersand-args-ghcr.io/acme/tool"
 rm -f "$DOCKERSAND_ARGS_FILE"
-(cd "$repo" && DOCKERSAND_GIT_STRATEGY=mount "$launcher" ghcr.io/acme/tool) 2>"$fixture/stderr" ||
+(cd "$repo" && DOCKERSAND_GIT_STRATEGY=mount "$launcher" run ghcr.io/acme/tool) 2>"$fixture/stderr" ||
   { cat "$fixture/stderr" >&2; fail 'registry-path launch failed'; }
 [[ ! -e "$fixture/hook-marker" ]] || fail 'repo-controlled hook ran on the host'
 [[ -s "$DOCKERSAND_ARGS_FILE" ]] || fail 'docker run not called for registry-path image'
@@ -152,7 +170,7 @@ echo 'PASS: PATH hooks run for bare app names'
 for bad in "--privileged alpine" "-- --privileged alpine"; do
   rm -f "$DOCKERSAND_ARGS_FILE"
   # shellcheck disable=SC2086
-  if (cd "$repo" && DOCKERSAND_GIT_STRATEGY=mount "$launcher" $bad) 2>/dev/null; then
+  if (cd "$repo" && DOCKERSAND_GIT_STRATEGY=mount "$launcher" run $bad) 2>/dev/null; then
     fail "launched with option-like app: $bad"
   fi
   [[ ! -e "$DOCKERSAND_ARGS_FILE" ]] || fail "docker run called for: $bad"
@@ -220,7 +238,7 @@ done
 rm -f "$DOCKERSAND_ARGS_FILE"
 touch "$fixture/hold"
 (cd "$repo" && DOCKERSAND_GIT_STRATEGY=mount DOCKERSAND_GCLOUD=1 FAKE_DOCKER_HOLD="$fixture/hold" \
-  "$launcher" test env) 2>"$fixture/stderr" &
+  "$launcher" run test env) 2>"$fixture/stderr" &
 sandbox=$!
 wait_for test -s "$DOCKERSAND_ARGS_FILE" || { cat "$fixture/stderr" >&2; fail 'launcher did not start'; }
 mapfile -d '' -t args <"$DOCKERSAND_ARGS_FILE"
@@ -256,7 +274,7 @@ echo 'PASS: gcloud token deleted when the sandbox quits'
 rm -f "$DOCKERSAND_ARGS_FILE"
 touch "$fixture/hold"
 (cd "$repo" && DOCKERSAND_GIT_STRATEGY=mount DOCKERSAND_GCLOUD=1 FAKE_DOCKER_HOLD="$fixture/hold" \
-  exec bash -c '"$0" test env & exec sleep 60' "$launcher") 2>"$fixture/stderr" &
+  exec bash -c '"$0" run test env & exec sleep 60' "$launcher") 2>"$fixture/stderr" &
 parent=$!
 wait_for test -s "$DOCKERSAND_ARGS_FILE" || { cat "$fixture/stderr" >&2; fail 'launcher did not start'; }
 mapfile -d '' -t args <"$DOCKERSAND_ARGS_FILE"
@@ -269,7 +287,7 @@ wait "$parent" 2>/dev/null || true
 echo 'PASS: gcloud token deleted when the sandbox quits unreaped'
 
 if (cd "$repo" && DOCKERSAND_GIT_STRATEGY=mount DOCKERSAND_GCLOUD=1 FAKE_GCLOUD_FAIL=1 \
-  "$launcher" test env) 2>/dev/null; then
+  "$launcher" run test env) 2>/dev/null; then
   fail 'launched without a gcloud token'
 fi
 for dir in "$XDG_STATE_HOME"/dockersand/gcloud.*; do
@@ -291,7 +309,7 @@ echo 'PASS: opt-in gh token forwarding'
 
 rm -f "$DOCKERSAND_ARGS_FILE"
 if (cd "$repo" && DOCKERSAND_GIT_STRATEGY=mount DOCKERSAND_GH=1 FAKE_GH_FAIL=1 \
-  "$launcher" test env) 2>/dev/null; then
+  "$launcher" run test env) 2>/dev/null; then
   fail 'launched without a gh token'
 fi
 [[ ! -e "$DOCKERSAND_ARGS_FILE" ]] || fail 'docker run called without a gh token'

@@ -41,7 +41,7 @@ git -C "$repo" remote set-url --add mirrors https://fetch.example.test/second.gi
 git -C "$repo" remote set-url --add --push mirrors "$fixture/push one"
 git -C "$repo" remote set-url --add --push mirrors "$fixture/push two"
 
-(cd "$repo" && DOCKERSAND_GIT_STRATEGY=clone DOCKERSAND_SESSION_NAME=remotes "$launcher" test) \
+(cd "$repo" && DOCKERSAND_GIT_STRATEGY=clone DOCKERSAND_SESSION_NAME=remotes "$launcher" run test) \
   2>"$fixture/stderr" || { cat "$fixture/stderr" >&2; exit 1; }
 checkout="repo-$(printf %s "$(realpath "$repo")" | sha256sum | cut -c1-8)"
 clone="$XDG_STATE_HOME/dockersand/repos/$checkout/remotes/repo"

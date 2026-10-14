@@ -31,10 +31,10 @@ unset DOCKERSAND_EGRESS DOCKERSAND_SSH DOCKERSAND_SESSION_NAME
 host_id="$(dbus-send --session --print-reply --dest=org.freedesktop.DBus \
   /org/freedesktop/DBus org.freedesktop.DBus.GetId | sed -n 's/^ *string "\(.*\)"$/\1/p')"
 cd "$fixture/project"
-sandbox_id="$(DOCKERSAND_ENTRYPOINT=dbus-send "$launcher" "$image" \
+sandbox_id="$(DOCKERSAND_ENTRYPOINT=dbus-send "$launcher" run "$image" \
   --session --print-reply --dest=org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus.GetId \
   | sed -n 's/^ *string "\(.*\)"$/\1/p')"
 [[ -n "$host_id" && "$sandbox_id" == "$host_id" ]]
 echo 'PASS: sandbox authenticates to the same private bus as the host'
-DOCKERSAND_ENTRYPOINT=bash "$launcher" "$image" -c 'set -e; notify-send --version; secret-tool lookup --help >/dev/null'
+DOCKERSAND_ENTRYPOINT=bash "$launcher" run "$image" -c 'set -e; notify-send --version; secret-tool lookup --help >/dev/null'
 echo 'PASS: notification and Secret Service clients are available'

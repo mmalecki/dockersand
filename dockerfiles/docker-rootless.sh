@@ -9,7 +9,7 @@ case "${1:-}" in
 esac
 
 if [[ "${DOCKERSAND_DIND:-}" != 1 ]]; then
-  echo "rootless Docker is disabled; launch with DOCKERSAND_DIND=1 dockersand <app>" >&2
+  echo "rootless Docker is disabled; launch with DOCKERSAND_DIND=1 dockersand run <app>" >&2
   exit 1
 fi
 
