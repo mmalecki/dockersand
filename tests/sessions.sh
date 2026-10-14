@@ -57,7 +57,7 @@ run_list() {
 assert_row() {
   local row
   printf -v row '%-20s %-12s %q\t%s\t%s' "$1" "$2" "$3" "$4" "$5"
-  rg -Fqx -- "$row" "$fixture/stdout" || fail "missing row: $row"
+  grep -Fxq -- "$row" "$fixture/stdout" || fail "missing row: $row"
 }
 assert_success() {
   [[ "$list_exit" == 0 && ! -s "$fixture/stderr" ]] || { cat "$fixture/stderr" >&2; fail 'listing failed'; }
@@ -68,7 +68,7 @@ run_list
 assert_success
 [[ "$(wc -l <"$fixture/stdout")" == 1 ]] || fail 'empty state should print only a header'
 printf -v header '%-20s %-12s %s\t%s\t%s' 'SESSION ID' STATE 'SANDBOX DIRECTORY' CONTAINER COMMAND
-rg -Fqx -- "$header" "$fixture/stdout" || fail "missing header: $header"
+grep -Fxq -- "$header" "$fixture/stdout" || fail "missing header: $header"
 [[ ! -s "$MOCK_DOCKER_ROOT/calls" && ! -e "$XDG_STATE_HOME" ]] || fail 'empty listing accessed Docker or created state'
 echo 'PASS: empty listing runs anywhere without launch setup or state writes'
 
@@ -158,7 +158,7 @@ for arguments in 'sessions' 'sessions unknown' 'sessions list extra' '--sessions
   if "$launcher" "${argv[@]}" >"$fixture/stdout" 2>"$fixture/stderr"; then
     fail "accepted invalid management arguments: $arguments"
   fi
-  rg -Fq 'dockersand sessions list' "$fixture/stderr" || fail 'missing management usage'
+  grep -Fq 'dockersand sessions list' "$fixture/stderr" || fail 'missing management usage'
 done
 [[ ! -e "$MOCK_DOCKER_ROOT/unexpected-launch-setup" ]] || fail 'management ran launch setup'
 echo 'PASS: invalid management commands fail before launch setup'
