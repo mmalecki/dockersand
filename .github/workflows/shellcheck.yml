@@ -7,12 +7,14 @@ on:
       - '**/*.bash'
       - 'dockersand*'
       - 'tests/**'
+      - 'egress-proxy/**'
   pull_request:
     paths:
       - '**/*.sh'
       - '**/*.bash'
       - 'dockersand*'
       - 'tests/**'
+      - 'egress-proxy/**'
 
 jobs:
   shellcheck:
@@ -34,3 +36,6 @@ jobs:
 
       - name: Test D-Bus forwarding
         run: bash tests/dbus.sh
+
+      - name: Test egress proxy setup
+        run: bash tests/egress.sh
