@@ -74,6 +74,10 @@ your remotes, and is independent of the working copy. Bring the work back from y
 
     git fetch ~/.local/state/dockersand/repos/<checkout>/<session>/<repo-name> <branch>
 
+New clones preserve all fetch and push URLs for each remote, including separate push destinations.
+Host `insteadOf` and `pushInsteadOf` rules are resolved when the session is created, so the URLs work without
+mounting your gitconfig. Resuming a session keeps its existing remote configuration.
+
 The session name is random and printed at startup. Set `DOCKERSAND_SESSION_NAME` to resume a session, or to give a
 new one a memorable name:
 
@@ -301,6 +305,7 @@ may be enlightening on the build-vs-buy conundrum.
 ## Tests
 
 Run `bash tests/launcher.sh` to check Git identity resolution and runtime selection without a Docker daemon.
+Run `bash tests/remotes.sh` to check clone fetch/push URLs, host URL rewrites, and pushes to multiple local destinations.
 Run `bash tests/sessions.sh` to check session discovery, live status, and Docker failure handling using a mock Docker command.
 Run `bash tests/egress.sh` to check proxy availability checks and proxy configuration for filtered launches.
 After rebuilding the images, test nested builds, networking and Compose with:

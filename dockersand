@@ -171,7 +171,8 @@ git_strategy() {
 
 # Makes or reuses the session's clone, and mounts it in place of the checkout
 prepare_clone() {
-  local session checkout_name container_name repos clone branch remote
+  local session checkout_name container_name repos clone branch remote urls url
+  local -a fetch_urls push_urls
   if (( ! in_repo )); then
     echo "DOCKERSAND_GIT_STRATEGY=clone needs a git repository" >&2
     exit 1
@@ -213,10 +214,21 @@ prepare_clone() {
       git -C "$clone_tmp" checkout -q --detach "$(git rev-parse HEAD)"
     fi
     # Swap the host-path origin, unreachable from the sandbox, for the
-    # checkout's own remotes
+    # checkout's own remotes. Resolve host URL rewrites now: the sandbox does
+    # not receive the host gitconfig, and push URLs can differ from fetch URLs.
     git -C "$clone_tmp" remote remove origin
     while read -r remote; do
-      git -C "$clone_tmp" remote add "$remote" "$(git remote get-url "$remote")"
+      urls="$(git remote get-url --all "$remote")"
+      mapfile -t fetch_urls <<<"$urls"
+      urls="$(git remote get-url --push --all "$remote")"
+      mapfile -t push_urls <<<"$urls"
+      git -C "$clone_tmp" remote add "$remote" "${fetch_urls[0]}"
+      for url in "${fetch_urls[@]:1}"; do
+        git -C "$clone_tmp" config --local --add "remote.$remote.url" "$url"
+      done
+      for url in "${push_urls[@]}"; do
+        git -C "$clone_tmp" config --local --add "remote.$remote.pushurl" "$url"
+      done
     done < <(git remote)
     # -T: if a concurrent first run created $clone meanwhile, fail rather
     # than nest ours inside it, and use theirs
