@@ -8,4 +8,5 @@ bind() { printf 'type=bind,"src=%s","dst=%s"' "${1//\"/\"\"}" "${2//\"/\"\"}"; }
 mkdir -p "$HOME/.pi"
 
 printf '%s\n' \
-  --mount "$(bind "$HOME/.pi" /home/work/.pi)"
+  --mount "$(bind "$HOME/.pi" /home/work/.pi)" \
+  -e PARALLEL_API_KEY
