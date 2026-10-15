@@ -26,5 +26,6 @@ networks:
   dockersand-internal:
     name: dockersand-internal
     internal: true
+    enable_ipv6: true
   dockersand-egress:
     name: dockersand-egress
