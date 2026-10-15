@@ -195,21 +195,6 @@ network and the host.
 `squid.conf`, on the other hand, only enables traffic to major inference providers, GitHub, npm and PyPI. It will most
 likely require adjustment to fit your specific use-case.
 
-The internal network uses Docker's `isolated` gateway mode for IPv4 and IPv6, so the bridge has no host address.
-IPv6 is explicitly enabled on the network so Docker also removes the bridge's automatic IPv6 link-local address.
-`internal: true` alone still allows direct access to host services on the bridge gateway, bypassing Squid.
-This requires [Docker Engine 28 or newer](https://docs.docker.com/engine/release-notes/28/).
-When upgrading an existing proxy, stop all filtered sandboxes, then recreate the networks from `egress-proxy/`:
-
-```sh
-docker compose down
-docker compose up -d
-```
-
-Restarting or force-recreating only the proxy container does not update an existing network's gateway mode.
-The shared internal network still permits connections between sandboxes; this setting isolates the host gateway,
-not individual sandbox sessions.
-
 It is also possible to allow access to inference provider running on the host, as `host.docker.internal`, by
 uncommenting `http_access allow host_services` rules in configuration, but
 keep in mind that your host's firewall will treat this traffic like any other,
@@ -300,7 +285,6 @@ may be enlightening on the build-vs-buy conundrum.
 Run `bash tests/launcher.sh` to check Git identity resolution and runtime selection without a Docker daemon.
 Run `bash tests/remotes.sh` to check clone fetch/push URLs, host URL rewrites, and pushes to multiple local destinations.
 Run `bash tests/sessions.sh` to check session discovery, live status, and Docker failure handling using a mock Docker command.
-Run `bash tests/egress.sh` to check proxy availability checks and proxy configuration for filtered launches.
 After rebuilding the images, test nested builds, networking and Compose with:
 
 ```sh

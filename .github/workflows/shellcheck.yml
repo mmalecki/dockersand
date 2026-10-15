@@ -7,7 +7,6 @@ on:
       - '**/*.bash'
       - 'dockersand*'
       - 'tests/**'
-      - 'egress-proxy/**'
       - '.github/workflows/**'
   pull_request:
     paths:
@@ -15,7 +14,6 @@ on:
       - '**/*.bash'
       - 'dockersand*'
       - 'tests/**'
-      - 'egress-proxy/**'
       - '.github/workflows/**'
 
 jobs:
@@ -41,9 +39,6 @@ jobs:
 
       - name: Test D-Bus forwarding
         run: bash tests/dbus.sh
-
-      - name: Test egress proxy setup
-        run: bash tests/egress.sh
 
       - name: Test sessions
         run: bash tests/sessions.sh

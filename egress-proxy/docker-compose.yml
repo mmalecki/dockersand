@@ -26,11 +26,5 @@ networks:
   dockersand-internal:
     name: dockersand-internal
     internal: true
-    # Run Docker's IPv6 setup too, so isolated mode removes link-local addresses.
-    enable_ipv6: true
-    # internal alone still exposes host services on the bridge gateway.
-    driver_opts:
-      com.docker.network.bridge.gateway_mode_ipv4: isolated
-      com.docker.network.bridge.gateway_mode_ipv6: isolated
   dockersand-egress:
     name: dockersand-egress
