@@ -138,12 +138,12 @@ for arguments in '' test '--sessions list' '-- test' 'run' 'run --'; do
   if (cd "$repo" && DOCKERSAND_GIT_STRATEGY=mount "$launcher" "${argv[@]}") >/dev/null 2>"$fixture/stderr"; then
     fail "accepted invalid arguments: $arguments"
   fi
-  rg -Fq 'usage: dockersand run <app>' "$fixture/stderr" || fail "missing usage for: $arguments"
+  grep -Fq 'usage: dockersand run <app>' "$fixture/stderr" || fail "missing usage for: $arguments"
   [[ ! -e "$DOCKERSAND_ARGS_FILE" ]] || fail "docker run called for: $arguments"
 done
 for help in -h --help; do
   "$launcher" "$help" >"$fixture/stdout" || fail "$help failed"
-  rg -Fq 'usage: dockersand run <app>' "$fixture/stdout" || fail "$help did not print usage"
+  grep -Fq 'usage: dockersand run <app>' "$fixture/stdout" || fail "$help did not print usage"
 done
 echo 'PASS: bare apps and unknown subcommands print usage without launching'
 
