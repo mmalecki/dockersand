@@ -285,29 +285,18 @@ hook_is_trusted() {
 
 # Per-app hooks, dockersand-args-<app> in $hook_dir, print one docker argument
 # per line. They are trusted code, not user configuration, so only run when
-# the path to them is outside the invoking user's write-reach.
+# the path to them is outside the invoking user's write-reach — however the
+# hook directory was selected.
 run_hook() {
   local hook="$hook_dir/dockersand-args-$app" out
   local -a hook_args
   # App names with a slash would resolve against PWD, so a repo could plant
   # a hook for e.g. ghcr.io/acme/tool
   [[ "$app" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || return 0
-  if [[ ! -x "$hook" ]]; then
-    # Hooks used to be resolved from PATH; help users of old installs
-    if command -v "dockersand-args-$app" >/dev/null; then
-      echo "dockersand-args-$app is on PATH; hooks moved to $hook_dir (see the README installation section)" >&2
-    fi
-    return 0
-  fi
+  [[ -x "$hook" ]] || return 0
   if ! hook_is_trusted "$hook"; then
-    if [[ -z "${DOCKERSAND_HOOK_DIR+x}" ]]; then
-      # The default location is root's to manage, so a user-writable hook
-      # there is tampering or a misinstall: never run it
-      echo "skipping hook $hook: it is in a user-writable location; see the README installation section" >&2
-      return 0
-    fi
-    # An explicit DOCKERSAND_HOOK_DIR is the caller's own assertion of trust
-    echo "note: hooks under DOCKERSAND_HOOK_DIR=$hook_dir are user-writable" >&2
+    echo "skipping hook $hook: it is in a user-writable location; see the README installation section" >&2
+    return 0
   fi
   out="$("$hook")"
   if [[ -n "$out" ]]; then

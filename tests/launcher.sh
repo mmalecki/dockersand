@@ -146,12 +146,12 @@ for arguments in '' test '--sessions list' '-- test' 'run' 'run --'; do
   if (cd "$repo" && DOCKERSAND_GIT_STRATEGY=mount "$launcher" "${argv[@]}") >/dev/null 2>"$fixture/stderr"; then
     fail "accepted invalid arguments: $arguments"
   fi
-  rg -Fq 'usage: dockersand run <app>' "$fixture/stderr" || fail "missing usage for: $arguments"
+  grep -Fq 'usage: dockersand run <app>' "$fixture/stderr" || fail "missing usage for: $arguments"
   [[ ! -e "$DOCKERSAND_ARGS_FILE" ]] || fail "docker run called for: $arguments"
 done
 for help in -h --help; do
   "$launcher" "$help" >"$fixture/stdout" || fail "$help failed"
-  rg -Fq 'usage: dockersand run <app>' "$fixture/stdout" || fail "$help did not print usage"
+  grep -Fq 'usage: dockersand run <app>' "$fixture/stdout" || fail "$help did not print usage"
 done
 echo 'PASS: bare apps and unknown subcommands print usage without launching'
 
@@ -167,26 +167,23 @@ rm -f "$DOCKERSAND_ARGS_FILE"
 rm -rf "$repo/dockersand-args-ghcr.io"
 echo 'PASS: registry-path images do not run repo-controlled hooks'
 
-# Hooks are resolved from the hook directory, never from PATH; a hook found
-# on PATH from an old install produces a migration hint instead
+# Hooks are resolved from the hook directory, never from PATH
 printf '#!/usr/bin/env bash\nprintf "%%s\\n" -e PATH_HOOK_RAN=1\n' >"$fixture/bin/dockersand-args-test"
 chmod +x "$fixture/bin/dockersand-args-test"
 run_sandbox
 rm -f "$fixture/bin/dockersand-args-test"
 assert_no_arg PATH_HOOK_RAN=1
-rg -Fq 'hooks moved to' "$fixture/stderr" || fail 'missing migration hint for a PATH hook'
-echo 'PASS: PATH hooks are not used, with a migration hint'
+echo 'PASS: PATH hooks are not used'
 
-# An explicitly given DOCKERSAND_HOOK_DIR is the caller's own assertion of
-# trust: hooks run from it even when it is user-writable, with a notice
+# A user-writable hook directory is never run from, explicit or not
 mkdir -p "$fixture/hooks"
 printf '#!/usr/bin/env bash\nprintf "%%s\\n" -e HOOK_RAN=1\n' >"$fixture/hooks/dockersand-args-test"
 chmod +x "$fixture/hooks/dockersand-args-test"
 run_sandbox DOCKERSAND_HOOK_DIR="$fixture/hooks"
 rm -rf "$fixture/hooks"
-assert_arg HOOK_RAN=1
-rg -Fq 'user-writable' "$fixture/stderr" || fail 'missing user-writable notice for DOCKERSAND_HOOK_DIR'
-echo 'PASS: DOCKERSAND_HOOK_DIR hooks run, with a notice when user-writable'
+assert_no_arg HOOK_RAN=1
+grep -Fq 'skipping hook' "$fixture/stderr" || fail 'user-writable hook directory was not skipped loudly'
+echo 'PASS: user-writable hook directories are skipped, explicit or not'
 
 # The default hook directory must be outside the invoking user's write-reach
 if sudo -n true 2>/dev/null; then
@@ -199,7 +196,7 @@ if sudo -n true 2>/dev/null; then
 
   run_sandbox
   assert_arg ROOT_HOOK_RAN=1
-  rg -Fq 'user-writable' "$fixture/stderr" && fail 'unexpected notice for a root-owned hook'
+  grep -Fq 'user-writable' "$fixture/stderr" && fail 'unexpected notice for a root-owned hook'
   echo 'PASS: root-owned default hook directory is trusted'
 
   # A user-writable hook in the default directory is never run
@@ -207,13 +204,13 @@ if sudo -n true 2>/dev/null; then
   run_sandbox
   sudo chmod 755 /usr/local/libexec/dockersand/dockersand-args-test
   assert_no_arg ROOT_HOOK_RAN=1
-  rg -Fq 'skipping hook' "$fixture/stderr" || fail 'untrusted default hook was not skipped loudly'
+  grep -Fq 'skipping hook' "$fixture/stderr" || fail 'untrusted default hook was not skipped loudly'
   echo 'PASS: user-writable hooks in the default directory are skipped'
 
-  # Trusted explicitly too, without a notice
+  # Trusted explicitly too, without a warning
   run_sandbox DOCKERSAND_HOOK_DIR=/usr/local/libexec/dockersand
   assert_arg ROOT_HOOK_RAN=1
-  rg -Fq 'user-writable' "$fixture/stderr" && fail 'unexpected notice for a trusted DOCKERSAND_HOOK_DIR'
+  grep -Fq 'user-writable' "$fixture/stderr" && fail 'unexpected warning for a trusted DOCKERSAND_HOOK_DIR'
   echo 'PASS: DOCKERSAND_HOOK_DIR pointing at a trusted directory is quiet'
 
   if ((preexisting_hook_dir)); then

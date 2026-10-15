@@ -22,7 +22,7 @@ docker info >/dev/null &
 second=$!
 wait "$first"
 wait "$second"
-docker info --format '{{json .SecurityOptions}}' | rg -q 'name=rootless'
+docker info --format '{{json .SecurityOptions}}' | grep -q 'name=rootless'
 
 cat >"$fixture/Dockerfile" <<'EOF'
 FROM alpine:3.22

@@ -28,8 +28,9 @@ configuration: the launcher runs hooks only from locations the invoking user can
 component, not just the hook file: directory write access allows replacing entries by rename and repointing
 symlinks), and skips hooks it finds in user-writable locations. The check is for writability, not ownership,
 so read-only non-root locations like the Nix store also pass. `DOCKERSAND_HOOK_DIR` relocates the hook
-directory — an explicit choice to trust it. A NixOS/home-manager module can point it straight at the
-read-only store path (e.g. `${package}/libexec/dockersand`), which passes the trust check without warnings.
+directory; the same trust requirement applies wherever it points, so it must be outside your write-reach
+too. A NixOS/home-manager module can point it straight at the read-only store path
+(e.g. `${package}/libexec/dockersand`), which passes the trust check without warnings.
 
 You will also need to build and tag the images you would like to use. The example `Dockerfile`s in `dockerfiles/` are
 `claude`, `codex`, `opencode`, `bash`, and a base image for them all: `agents`. To build the full suite:
