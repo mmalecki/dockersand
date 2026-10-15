@@ -29,6 +29,7 @@ docker build -t opencode -f dockerfiles/Dockerfile.opencode .
 ```
 
 `dockersand` is not prescriptive - it'll work with any Docker image you supply it.
+Please note: the images do no dependency pinning due to maintenance cost. Supply your own images if that's not acceptable to you.
 
 ## Usage
 
@@ -68,7 +69,7 @@ mount only what the app needs.
 `DOCKERSAND_GIT_STRATEGY` selects what the sandbox works in: `clone` (the default) or `mount`.
 
 With `clone`, the sandbox works in a separate clone, so it doesn't see uncommitted changes and can't modify your
-`.git`. Each run is a new session with its own clone, kept at `~/.local/state/dockersand/repos/<checkout>/<session>/<repo-name>`,
+`.git`. Each `dockersand run` is a new session with its own clone, kept at `~/.local/state/dockersand/repos/<checkout>/<session>/<repo-name>`,
 so sandboxes started from the same checkout don't share anything. The clone starts on your current branch, has
 your remotes, and is independent of the working copy. Bring the work back from your sandbox:
 
@@ -109,14 +110,11 @@ the directory (equivalent to `mount`).
 dockersand sessions list
 ```
 
-Lists saved clone sessions across all checkouts, from any directory. Each row shows the session ID, state,
-absolute host sandbox directory, container name, and command. The directory contains the clone and any sibling worktrees;
-sessions with the same ID in different checkouts are distinguished by this path. The state root is
-`${XDG_STATE_HOME:-$HOME/.local/state}/dockersand`.
+Lists present and past clone sessions. Each row shows the session ID, state, absolute host sandbox
+directory, container name, and command. The directory contains the aforementioned clone and any sibling worktrees.
 
 Live states come from Docker (`running`, `paused`, `restarting`, etc.). The command is the container's
-configured executable and arguments, including the image entrypoint or `DOCKERSAND_ENTRYPOINT` override.
-Arguments are quoted and escaped; this does not track processes subsequently started inside the container.
+root process executable, including its arguments. Arguments are quoted and escaped.
 The container name matches the NAMES column of `docker ps` and can be passed to `docker exec`, `docker logs`,
 etc. Docker assigns a new container ID on every run, so use the name to match sessions to containers.
 Saved sessions without a container show `idle`. Sessions without a container show `—` for the name, and
@@ -124,8 +122,7 @@ sessions without a live command show `—` for the command.
 If Docker cannot be queried, affected sessions show `unknown`, a diagnostic is printed to stderr, and
 the command exits unsuccessfully. An empty session list prints only the column headers.
 
-Mount-mode sandboxes have no saved session and are not listed. Listing does not run Git inside the saved
-directories, execute app hooks, or start a sandbox.
+Mount-mode sandboxes have no saved session and are not listed. Listing does not run anything inside the sandbox, or any of the hooks.
 
 ### Git identity
 
