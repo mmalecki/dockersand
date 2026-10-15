@@ -15,7 +15,14 @@ Prerequisites: [gVisor installed and configured as a Docker runtime](https://gvi
 If you would like to use SSH forwarding, configure runsc with `--host-uds=open`, and set `DOCKERSAND_SSH=1` when running.
 Session D-Bus forwarding also requires `--host-uds=open`.
 
-For now, installation is manual. Drop every `dockersand*` script on your `PATH`.
+Install the launcher and the per-app hooks into `$PREFIX/bin` (`PREFIX` defaults to `/usr/local`):
+
+```sh
+sudo make install
+```
+
+Set `PREFIX` to install elsewhere, e.g. `make install PREFIX=~/.local`, and `DESTDIR` to stage the
+installation for packaging. `make uninstall`, with the same variables, removes the installed scripts.
 
 You will also need to build and tag the images you would like to use. The example `Dockerfile`s in `dockerfiles/` are
 `claude`, `codex`, `opencode`, `bash`, and a base image for them all: `agents`. To build the full suite:
@@ -304,6 +311,7 @@ Run `bash tests/launcher.sh` to check Git identity resolution and runtime select
 Run `bash tests/remotes.sh` to check clone fetch/push URLs, host URL rewrites, and pushes to multiple local destinations.
 Run `bash tests/sessions.sh` to check session discovery, live status, and Docker failure handling using a mock Docker command.
 Run `bash tests/egress.sh` to check proxy availability checks and proxy configuration for filtered launches.
+Run `bash tests/install.sh` to check that `make install` and `make uninstall` honour `PREFIX` and `DESTDIR`.
 After rebuilding the images, test nested builds, networking and Compose with:
 
 ```sh

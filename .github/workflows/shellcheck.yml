@@ -6,6 +6,7 @@ on:
       - '**/*.sh'
       - '**/*.bash'
       - 'dockersand*'
+      - 'Makefile'
       - 'tests/**'
       - 'egress-proxy/**'
       - '.github/workflows/**'
@@ -14,6 +15,7 @@ on:
       - '**/*.sh'
       - '**/*.bash'
       - 'dockersand*'
+      - 'Makefile'
       - 'tests/**'
       - 'egress-proxy/**'
       - '.github/workflows/**'
@@ -47,3 +49,6 @@ jobs:
 
       - name: Test sessions
         run: bash tests/sessions.sh
+
+      - name: Test installation
+        run: bash tests/install.sh
