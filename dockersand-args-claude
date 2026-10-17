@@ -6,8 +6,9 @@ bind() { printf 'type=bind,"src=%s","dst=%s"' "${1//\"/\"\"}" "${2//\"/\"\"}"; }
 
 # --mount needs these to exist; -v used to create them root-owned
 [[ -e "$HOME/.claude.json" ]] || touch "$HOME/.claude.json"
-mkdir -p "$HOME/.claude"
+mkdir -p "$HOME/.claude" "$HOME/.agents"
 
 printf '%s\n' \
   --mount "$(bind "$HOME/.claude.json" /home/work/.claude.json)" \
-  --mount "$(bind "$HOME/.claude" /home/work/.claude)"
+  --mount "$(bind "$HOME/.claude" /home/work/.claude)" \
+  --mount "$(bind "$HOME/.agents" /home/work/.agents)"
