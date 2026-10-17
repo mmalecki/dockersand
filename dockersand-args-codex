@@ -5,7 +5,8 @@ set -e
 bind() { printf 'type=bind,"src=%s","dst=%s"' "${1//\"/\"\"}" "${2//\"/\"\"}"; }
 
 # --mount needs this to exist; -v used to create it root-owned
-mkdir -p "$HOME/.codex"
+mkdir -p "$HOME/.codex" "$HOME/.agents"
 
 printf '%s\n' \
-  --mount "$(bind "$HOME/.codex" /home/work/.codex)"
+  --mount "$(bind "$HOME/.codex" /home/work/.codex)" \
+  --mount "$(bind "$HOME/.agents" /home/work/.agents)"
