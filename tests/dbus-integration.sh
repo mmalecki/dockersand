@@ -27,7 +27,7 @@ done
 [[ -S "$socket" ]] || { cat "$fixture/daemon.log" >&2; exit 1; }
 
 export DBUS_SESSION_BUS_ADDRESS="$address" DOCKERSAND_DBUS=1 DOCKERSAND_GIT_STRATEGY=mount
-unset DOCKERSAND_EGRESS DOCKERSAND_SSH DOCKERSAND_SESSION_NAME
+unset DOCKERSAND_EGRESS DOCKERSAND_SSH DOCKERSAND_SESSION
 host_id="$(dbus-send --session --print-reply --dest=org.freedesktop.DBus \
   /org/freedesktop/DBus org.freedesktop.DBus.GetId | sed -n 's/^ *string "\(.*\)"$/\1/p')"
 cd "$fixture/project"

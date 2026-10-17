@@ -151,7 +151,7 @@ resolve_repo() {
 }
 
 # DOCKERSAND_GIT_STRATEGY selects what the sandbox works in:
-#   clone (default): a wholly separate clone per session (DOCKERSAND_SESSION_NAME)
+#   clone (default): a wholly separate clone per session (DOCKERSAND_SESSION)
 #   mount: the checkout itself, including its .git
 git_strategy() {
   local strategy="${DOCKERSAND_GIT_STRATEGY:-}"
@@ -179,11 +179,11 @@ prepare_clone() {
     echo "DOCKERSAND_GIT_STRATEGY=clone needs a git repository" >&2
     exit 1
   fi
-  # DOCKERSAND_SESSION_NAME picks the clone, so that runs are isolated from
+  # DOCKERSAND_SESSION picks the clone, so that runs are isolated from
   # each other unless they resume a session by name
-  session="${DOCKERSAND_SESSION_NAME:-$(od -An -N4 -tx4 /dev/urandom | tr -d ' ')}"
+  session="${DOCKERSAND_SESSION:-$(od -An -N4 -tx4 /dev/urandom | tr -d ' ')}"
   if [[ ! "$session" =~ ^[A-Za-z0-9._-]+$ || "$session" == . || "$session" == .. ]]; then
-    echo "invalid DOCKERSAND_SESSION_NAME: $session (expected [A-Za-z0-9._-]+)" >&2
+    echo "invalid DOCKERSAND_SESSION: $session (expected [A-Za-z0-9._-]+)" >&2
     exit 1
   fi
   checkout_name="$repo_dir-$(printf %s "$rp_repo" | sha256sum | cut -c1-8)"
@@ -194,7 +194,7 @@ prepare_clone() {
     echo "session $session is already running (container $container_name)" >&2
     exit 1
   fi
-  echo "session $session, resume with: DOCKERSAND_SESSION_NAME=$session dockersand run $app" >&2
+  echo "session $session, resume with: dockersand run --session $session $app" >&2
   # The whole of ~/repos is mounted, with the clone in it, so that worktrees
   # the sandbox creates next to the clone (../<name>) persist too
   repos="$state/repos/$checkout_name/$session"
@@ -473,14 +473,56 @@ network_args() {
 }
 
 usage() {
-  printf '%s\n' 'usage: dockersand run <app> [args...]' '       dockersand sessions list'
+  printf '%s\n' 'usage: dockersand run [options] [--] <app> [args...]' '       dockersand sessions list' \
+    '' 'run options:' \
+    '  --session <name>       Create or resume a clone session (DOCKERSAND_SESSION)' \
+    '  --git-strategy <mode>  Select clone or mount (DOCKERSAND_GIT_STRATEGY)' \
+    '  --entrypoint <path>    Override the image entrypoint (DOCKERSAND_ENTRYPOINT)' \
+    '  --host-gateway <name>  Name the host; empty disables (DOCKERSAND_HOST_GATEWAY)' \
+    '  --dind                 Enable nested Docker (DOCKERSAND_DIND=1)' \
+    '  --dbus                 Forward the session bus (DOCKERSAND_DBUS=1)' \
+    '  --gcloud               Forward a Google Cloud token (DOCKERSAND_GCLOUD=1)' \
+    '  --gh                   Forward a GitHub token (DOCKERSAND_GH=1)' \
+    '  --ssh                  Forward the SSH agent and known_hosts (DOCKERSAND_SSH=1)' \
+    '  --egress               Enable allowlisted egress (DOCKERSAND_EGRESS=1)'
 }
 
 # Launches the sandbox: everything after the app passes through to the image
 run_app() {
   local img strategy work_dir
 
-  [[ "${1:-}" != -- ]] || shift
+  while (( $# )); do
+    case "$1" in
+      --dind) export DOCKERSAND_DIND=1; shift ;;
+      --dbus) export DOCKERSAND_DBUS=1; shift ;;
+      --gcloud) export DOCKERSAND_GCLOUD=1; shift ;;
+      --gh) export DOCKERSAND_GH=1; shift ;;
+      --ssh) export DOCKERSAND_SSH=1; shift ;;
+      --egress) export DOCKERSAND_EGRESS=1; shift ;;
+      --session)
+        if [[ -z "${2:-}" || "$2" == --* ]]; then
+          echo '--session requires a name' >&2
+          exit 1
+        fi
+        export DOCKERSAND_SESSION="$2"
+        shift 2
+        ;;
+      --git-strategy | --entrypoint | --host-gateway)
+        if (( $# < 2 )) || [[ "$2" == --* ]]; then
+          echo "$1 requires a value" >&2
+          exit 1
+        fi
+        case "$1" in
+          --git-strategy) export DOCKERSAND_GIT_STRATEGY="$2" ;;
+          --entrypoint) export DOCKERSAND_ENTRYPOINT="$2" ;;
+          --host-gateway) export DOCKERSAND_HOST_GATEWAY="$2" ;;
+        esac
+        shift 2
+        ;;
+      --) shift; break ;;
+      *) break ;;
+    esac
+  done
   if (( ! $# )); then
     usage >&2
     exit 1
@@ -506,8 +548,8 @@ run_app() {
   case "$strategy" in
     clone) prepare_clone ;;
     mount)
-      if [[ -n "${DOCKERSAND_SESSION_NAME:-}" ]]; then
-        echo "DOCKERSAND_SESSION_NAME needs DOCKERSAND_GIT_STRATEGY=clone" >&2
+      if [[ -n "${DOCKERSAND_SESSION:-}" ]]; then
+        echo "DOCKERSAND_SESSION needs DOCKERSAND_GIT_STRATEGY=clone" >&2
         exit 1
       fi
       ;;

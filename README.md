@@ -34,12 +34,30 @@ Please note: the images do no dependency pinning due to maintenance cost. Supply
 ## Usage
 
 ```sh
-dockersand run <app> [app-args...]
+dockersand run [options] [--] <app> [app-args...]
 ```
 
 launches a Docker container from an image tagged `<app>`, mounting the repository (or directory, if
 outside a git repo) you are in at `/home/work/repos/<repo-name>` (where `repo-name` is the name of the top-level repository directory).
 If you are in a repository subdirectory, it drops you into the same one in the sandbox as well.
+
+Options go before the app name. Arguments after the app name pass through unchanged.
+Command-line options override their corresponding environment variables; environment variables remain supported.
+
+| Option | Environment variable | Effect |
+| --- | --- | --- |
+| `--session <name>` | `DOCKERSAND_SESSION=<name>` | Create or resume a named clone session |
+| `--git-strategy <mode>` | `DOCKERSAND_GIT_STRATEGY=<mode>` | Select `clone` or `mount` |
+| `--entrypoint <path>` | `DOCKERSAND_ENTRYPOINT=<path>` | Override the image entrypoint |
+| `--host-gateway <name>` | `DOCKERSAND_HOST_GATEWAY=<name>` | Name the host; `''` disables the mapping |
+| `--dind` | `DOCKERSAND_DIND=1` | Enable nested Docker |
+| `--dbus` | `DOCKERSAND_DBUS=1` | Forward the host session bus |
+| `--gcloud` | `DOCKERSAND_GCLOUD=1` | Forward a Google Cloud access token |
+| `--gh` | `DOCKERSAND_GH=1` | Forward a GitHub token |
+| `--ssh` | `DOCKERSAND_SSH=1` | Forward the SSH agent and known_hosts |
+| `--egress` | `DOCKERSAND_EGRESS=1` | Enable allowlisted egress |
+
+For example: `dockersand run --session feature --ssh --gh codex`.
 
 By default (inside a git repository) the sandbox works in a separate clone, so it doesn't see uncommitted changes
 and can't modify your `.git`. Use `DOCKERSAND_GIT_STRATEGY=mount` to work in the checkout directly.
@@ -79,10 +97,12 @@ New clones preserve all fetch and push URLs for each remote, including separate 
 Host `insteadOf` and `pushInsteadOf` rules are resolved when the session is created, so the URLs work without
 mounting your gitconfig. Resuming a session keeps its existing remote configuration.
 
-The session name is random and printed at startup. Set `DOCKERSAND_SESSION_NAME` to resume a session, or to give a
+The session name is random and printed at startup. Use `--session <name>` or set `DOCKERSAND_SESSION` to resume a session, or to give a
 new one a memorable name:
 
-    DOCKERSAND_SESSION_NAME=<session> dockersand run <app> [args...]
+    dockersand run --session <session> <app> [args...]
+
+`DOCKERSAND_SESSION` replaces the former `DOCKERSAND_SESSION_NAME` variable.
 
 A session runs in at most one sandbox at a time: its container is named after it, and Docker refuses to start a
 second one.
@@ -141,13 +161,15 @@ retain `runsc` and `no-new-privileges`. The host must support unprivileged user 
 `/dev/net/tun`, which is passed through for userspace networking.
 
 ```sh
-DOCKERSAND_DIND=1 dockersand run bash
+dockersand run --dind bash
 # Inside the sandbox:
 docker run --rm hello-world
 docker build -t my-solution .
 docker compose up --build
 ```
 
+`--dind` goes before the app name and enables nested Docker even if `DOCKERSAND_DIND=0` is set.
+`DOCKERSAND_DIND=1 dockersand run bash` remains supported. Arguments after the app name are passed to the app.
 
 The nested daemon starts on the first Docker command and runs as `work`, using a private Unix socket.
 It uses the `vfs` storage driver for compatibility with nested filesystems. Images, containers and volumes
@@ -266,7 +288,7 @@ inference provider running on the host. `DOCKERSAND_HOST_GATEWAY` changes the na
 
 ```sh
 DOCKERSAND_HOST_GATEWAY=host.internal dockersand run <app> [args...]
-DOCKERSAND_HOST_GATEWAY= dockersand run <app> [args...]
+dockersand run --host-gateway '' <app> [args...]
 ```
 
 Omitting the name doesn't block access to the host: the sandbox can still reach it by the gateway IP. Only egress

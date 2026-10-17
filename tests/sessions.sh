@@ -6,7 +6,7 @@ fixture="$(mktemp -d)"
 trap 'rm -rf "$fixture"' EXIT
 export HOME="$fixture/home" XDG_STATE_HOME="$fixture/state with spaces"
 export MOCK_DOCKER_ROOT="$fixture/docker"
-unset DOCKERSAND_GIT_STRATEGY DOCKERSAND_SESSION_NAME
+unset DOCKERSAND_GIT_STRATEGY DOCKERSAND_SESSION
 mkdir -p "$HOME" "$fixture/bin" "$MOCK_DOCKER_ROOT"
 root="$XDG_STATE_HOME/dockersand/repos"
 touch "$MOCK_DOCKER_ROOT/names" "$MOCK_DOCKER_ROOT/calls"
