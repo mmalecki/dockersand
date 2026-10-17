@@ -11,13 +11,21 @@ export XDG_STATE_HOME="$fixture/state" DOCKERSAND_ARGS_FILE="$fixture/args"
 export FAKE_GCLOUD_TOKEN_FILE="$fixture/gcloud-token"
 unset GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL
 unset GIT_AUTHOR_DATE GIT_COMMITTER_DATE EMAIL GIT_CONFIG_COUNT
-unset DOCKERSAND_DIND DOCKERSAND_EGRESS DOCKERSAND_SESSION_NAME DOCKERSAND_SSH
+unset DOCKERSAND_DIND DOCKERSAND_EGRESS DOCKERSAND_SESSION DOCKERSAND_SSH
 unset DOCKERSAND_GCLOUD DOCKERSAND_GH GH_TOKEN XDG_RUNTIME_DIR
+unset DOCKERSAND_DBUS DOCKERSAND_ENTRYPOINT DOCKERSAND_HOST_GATEWAY DOCKERSAND_GIT_STRATEGY
 unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR
 
 # Capture the actual docker run argv; no daemon is needed for these tests.
 cat >"$fixture/bin/docker" <<'EOF'
 #!/usr/bin/env bash
+if [[ "$1" == inspect && "${FAKE_EGRESS_PROXY:-}" == 1 ]]; then
+  case "$3" in
+    '{{.State.Running}}') echo true ;;
+    *) echo 172.30.0.2 ;;
+  esac
+  exit 0
+fi
 if [[ "$1" == run ]]; then
   printf '%s\0' "$@" >"$DOCKERSAND_ARGS_FILE"
   printf '%s' "${GH_TOKEN-unset}" >"$DOCKERSAND_ARGS_FILE.gh-token"
@@ -61,6 +69,12 @@ wait_for() {
 run_sandbox() {
   (cd "$repo" && DOCKERSAND_GIT_STRATEGY=mount env "$@" "$launcher" run test env) \
     2>"$fixture/stderr" || { cat "$fixture/stderr" >&2; fail "launcher failed"; }
+  mapfile -d '' -t args <"$DOCKERSAND_ARGS_FILE"
+}
+
+run_cli() {
+  (cd "$repo" && DOCKERSAND_GIT_STRATEGY=mount "$launcher" run "$@") \
+    2>"$fixture/stderr" || { cat "$fixture/stderr" >&2; fail 'launcher failed'; }
   mapfile -d '' -t args <"$DOCKERSAND_ARGS_FILE"
 }
 
@@ -111,12 +125,81 @@ run_sandbox
 assert_identity 'Local Name' local@example.test
 echo 'PASS: repository config overrides global identity'
 
-run_sandbox DOCKERSAND_GIT_STRATEGY=clone DOCKERSAND_SESSION_NAME=identity
+run_sandbox DOCKERSAND_GIT_STRATEGY=clone DOCKERSAND_SESSION=identity
 assert_identity 'Local Name' local@example.test
 assert_arg io.dockersand.session=identity
 checkout_name="$(basename "$repo")-$(printf %s "$(realpath "$repo")" | sha256sum | cut -c1-8)"
 assert_arg "io.dockersand.directory=$XDG_STATE_HOME/dockersand/repos/$checkout_name/identity"
 echo 'PASS: clone strategy uses the host checkout identity'
+
+cp "$DOCKERSAND_ARGS_FILE" "$fixture/session-args"
+(cd "$repo" && DOCKERSAND_GIT_STRATEGY=mount DOCKERSAND_SESSION=ignored \
+  "$launcher" run --session identity --git-strategy clone -- test env) \
+  2>"$fixture/stderr" || { cat "$fixture/stderr" >&2; fail '--session launch failed'; }
+cmp -s "$fixture/session-args" "$DOCKERSAND_ARGS_FILE" || fail '--session did not resume the environment-selected session'
+echo 'PASS: --session overrides the environment and resumes the same clone'
+
+for options in '--session' '--session --ssh test' '--session ../escape test' '--session . test' '--session .. test'; do
+  read -ra argv <<<"$options"
+  rm -f "$DOCKERSAND_ARGS_FILE"
+  if (cd "$repo" && "$launcher" run "${argv[@]}") 2>"$fixture/stderr"; then
+    fail "accepted invalid session arguments: $options"
+  fi
+  [[ ! -e "$DOCKERSAND_ARGS_FILE" ]] || fail "docker run called for: $options"
+done
+if (cd "$repo" && "$launcher" run --session '' test) 2>"$fixture/stderr"; then
+  fail 'accepted empty session name'
+fi
+if (cd "$repo" && DOCKERSAND_GIT_STRATEGY=mount "$launcher" run --session identity test) 2>"$fixture/stderr"; then
+  fail 'accepted --session with mount strategy'
+fi
+rg -Fq 'DOCKERSAND_SESSION needs DOCKERSAND_GIT_STRATEGY=clone' "$fixture/stderr" || fail 'missing session strategy diagnostic'
+[[ ! -e "$DOCKERSAND_ARGS_FILE" ]] || fail 'docker run called for an invalid session'
+echo 'PASS: invalid session names, missing values and mount strategy are rejected'
+
+for option in --git-strategy --entrypoint --host-gateway; do
+  for suffix in '' '--ssh test'; do
+    read -ra argv <<<"$suffix"
+    if (cd "$repo" && "$launcher" run "$option" "${argv[@]}") 2>"$fixture/stderr"; then
+      fail "accepted missing value for $option"
+    fi
+    rg -Fq -- "$option requires a value" "$fixture/stderr" || fail "missing diagnostic for $option"
+    [[ ! -e "$DOCKERSAND_ARGS_FILE" ]] || fail "docker run called without a value for $option"
+  done
+done
+if (cd "$repo" && "$launcher" run --git-strategy invalid test) 2>"$fixture/stderr"; then
+  fail 'accepted invalid git strategy'
+fi
+[[ ! -e "$DOCKERSAND_ARGS_FILE" ]] || fail 'docker run called for an invalid git strategy'
+echo 'PASS: valued switches reject missing arguments and invalid git strategies'
+
+run_sandbox DOCKERSAND_ENTRYPOINT='/path with spaces/bash' DOCKERSAND_HOST_GATEWAY=host.internal
+assert_arg --entrypoint
+assert_arg '/path with spaces/bash'
+assert_arg host.internal:host-gateway
+cp "$DOCKERSAND_ARGS_FILE" "$fixture/value-args"
+DOCKERSAND_ENTRYPOINT=ignored DOCKERSAND_HOST_GATEWAY=ignored \
+  run_cli --git-strategy mount --entrypoint '/path with spaces/bash' --host-gateway host.internal test env
+cmp -s "$fixture/value-args" "$DOCKERSAND_ARGS_FILE" || fail 'valued switches differ from environment settings'
+DOCKERSAND_ENTRYPOINT=ignored DOCKERSAND_HOST_GATEWAY=ignored \
+  run_cli --entrypoint '' --host-gateway '' test env
+assert_no_arg --entrypoint
+assert_no_arg --add-host
+echo 'PASS: entrypoint and host gateway switches override environment values, including empty values'
+
+run_sandbox DOCKERSAND_EGRESS=1 FAKE_EGRESS_PROXY=1
+assert_arg dockersand-internal
+assert_arg HTTP_PROXY=http://172.30.0.2:3128
+assert_no_arg --add-host
+cp "$DOCKERSAND_ARGS_FILE" "$fixture/egress-args"
+DOCKERSAND_EGRESS=0 FAKE_EGRESS_PROXY=1 run_cli --egress test env
+cmp -s "$fixture/egress-args" "$DOCKERSAND_ARGS_FILE" || fail '--egress differs from DOCKERSAND_EGRESS=1'
+rm -f "$DOCKERSAND_ARGS_FILE"
+if (cd "$repo" && "$launcher" run --egress test) 2>"$fixture/stderr"; then
+  fail 'accepted --egress without a running proxy'
+fi
+[[ ! -e "$DOCKERSAND_ARGS_FILE" ]] || fail 'docker run called without an egress proxy'
+echo 'PASS: --egress matches the environment opt-in and requires a running proxy'
 
 for image in sessions run; do
   (cd "$repo" && DOCKERSAND_GIT_STRATEGY=mount "$launcher" run "$image" sessions list) 2>"$fixture/stderr" ||
@@ -132,18 +215,18 @@ mapfile -d '' -t args <"$DOCKERSAND_ARGS_FILE"
   fail 'run -- did not pass the app and its arguments through'
 echo 'PASS: run passes subcommand names through as images and arguments, with an optional --'
 
-for arguments in '' test '--sessions list' '-- test' 'run' 'run --'; do
+for arguments in '' test '--sessions list' '-- test' 'run' 'run --' 'run --dind' 'run --dind --'; do
   read -ra argv <<<"$arguments"
   rm -f "$DOCKERSAND_ARGS_FILE"
   if (cd "$repo" && DOCKERSAND_GIT_STRATEGY=mount "$launcher" "${argv[@]}") >/dev/null 2>"$fixture/stderr"; then
     fail "accepted invalid arguments: $arguments"
   fi
-  rg -Fq 'usage: dockersand run <app>' "$fixture/stderr" || fail "missing usage for: $arguments"
+  rg -Fq 'usage: dockersand run [options] [--] <app>' "$fixture/stderr" || fail "missing usage for: $arguments"
   [[ ! -e "$DOCKERSAND_ARGS_FILE" ]] || fail "docker run called for: $arguments"
 done
 for help in -h --help; do
   "$launcher" "$help" >"$fixture/stdout" || fail "$help failed"
-  rg -Fq 'usage: dockersand run <app>' "$fixture/stdout" || fail "$help did not print usage"
+  rg -Fq 'usage: dockersand run [options] [--] <app>' "$fixture/stdout" || fail "$help did not print usage"
 done
 echo 'PASS: bare apps and unknown subcommands print usage without launching'
 
@@ -167,7 +250,7 @@ rm -f "$fixture/bin/dockersand-args-test"
 assert_arg HOOK_RAN=1
 echo 'PASS: PATH hooks run for bare app names'
 
-for bad in "--privileged alpine" "-- --privileged alpine"; do
+for bad in "--privileged alpine" "-- --privileged alpine" "--dind --privileged alpine" "-- --dind alpine"; do
   rm -f "$DOCKERSAND_ARGS_FILE"
   # shellcheck disable=SC2086
   if (cd "$repo" && DOCKERSAND_GIT_STRATEGY=mount "$launcher" run $bad) 2>/dev/null; then
@@ -212,7 +295,7 @@ echo 'PASS: conditional include'
 git -C "$repo" worktree add -q "$fixture/worktree" -b linked
 git config --global "includeIf.gitdir:$repo/.git/worktrees/.path" "$fixture/included"
 repo="$fixture/worktree"
-run_sandbox DOCKERSAND_GIT_STRATEGY=clone DOCKERSAND_SESSION_NAME=worktree
+run_sandbox DOCKERSAND_GIT_STRATEGY=clone DOCKERSAND_SESSION=worktree
 assert_identity 'Conditional Name' conditional@example.test
 echo 'PASS: conditional identity from a linked worktree'
 
@@ -230,6 +313,31 @@ assert_no_arg no-new-privileges
 assert_no_arg --privileged
 echo 'PASS: opt-in rootless Docker permissions'
 
+cp "$DOCKERSAND_ARGS_FILE" "$fixture/dind-args"
+for setting in '' 0 1; do
+  for options in '--dind' '--dind --' '--dind --dind'; do
+    read -ra argv <<<"$options"
+    (cd "$repo" && DOCKERSAND_GIT_STRATEGY=mount DOCKERSAND_DIND="$setting" \
+      "$launcher" run "${argv[@]}" test env) 2>"$fixture/stderr" ||
+      { cat "$fixture/stderr" >&2; fail '--dind launch failed'; }
+    cmp -s "$fixture/dind-args" "$DOCKERSAND_ARGS_FILE" || fail '--dind differs from DOCKERSAND_DIND=1'
+  done
+done
+echo 'PASS: --dind matches the environment opt-in and overrides DOCKERSAND_DIND=0'
+
+app_args=(--dind --dbus --gcloud --gh --ssh --egress --session 'two words' --git-strategy mount --entrypoint /bin/bash --host-gateway '')
+(cd "$repo" && DOCKERSAND_GIT_STRATEGY=mount "$launcher" run test "${app_args[@]}") \
+  2>"$fixture/stderr" || { cat "$fixture/stderr" >&2; fail 'app argument launch failed'; }
+mapfile -d '' -t args <"$DOCKERSAND_ARGS_FILE"
+assert_arg --runtime=runsc
+assert_no_arg DOCKERSAND_DIND=1
+[[ "${args[$(( ${#args[@]} - ${#app_args[@]} - 1 ))]}" == test ]] || fail 'app was not preserved'
+for i in "${!app_args[@]}"; do
+  [[ "${args[$(( ${#args[@]} - ${#app_args[@]} + i ))]}" == "${app_args[$i]}" ]] ||
+    fail 'app arguments were not preserved'
+done
+echo 'PASS: switches after the app are passed through without enabling integrations'
+
 run_sandbox
 for arg in "${args[@]}"; do
   [[ "$arg" != CLOUDSDK_* && "$arg" != */run/secrets/gcloud* ]] || fail 'unexpected gcloud argument'
@@ -237,8 +345,8 @@ done
 
 rm -f "$DOCKERSAND_ARGS_FILE"
 touch "$fixture/hold"
-(cd "$repo" && DOCKERSAND_GIT_STRATEGY=mount DOCKERSAND_GCLOUD=1 FAKE_DOCKER_HOLD="$fixture/hold" \
-  "$launcher" run test env) 2>"$fixture/stderr" &
+(cd "$repo" && DOCKERSAND_GIT_STRATEGY=mount DOCKERSAND_GCLOUD=0 FAKE_DOCKER_HOLD="$fixture/hold" \
+  "$launcher" run --gcloud test env) 2>"$fixture/stderr" &
 sandbox=$!
 wait_for test -s "$DOCKERSAND_ARGS_FILE" || { cat "$fixture/stderr" >&2; fail 'launcher did not start'; }
 mapfile -d '' -t args <"$DOCKERSAND_ARGS_FILE"
@@ -307,6 +415,12 @@ done
 [[ "$(<"$DOCKERSAND_ARGS_FILE.gh-token")" == gho_fake ]] || fail 'gh token not passed to docker'
 echo 'PASS: opt-in gh token forwarding'
 
+cp "$DOCKERSAND_ARGS_FILE" "$fixture/gh-args"
+DOCKERSAND_GH=0 run_cli --gh test env
+cmp -s "$fixture/gh-args" "$DOCKERSAND_ARGS_FILE" || fail '--gh differs from DOCKERSAND_GH=1'
+[[ "$(<"$DOCKERSAND_ARGS_FILE.gh-token")" == gho_fake ]] || fail '--gh did not pass the token to Docker'
+echo 'PASS: --gh matches the environment opt-in and overrides DOCKERSAND_GH=0'
+
 rm -f "$DOCKERSAND_ARGS_FILE"
 if (cd "$repo" && DOCKERSAND_GIT_STRATEGY=mount DOCKERSAND_GH=1 FAKE_GH_FAIL=1 \
   "$launcher" run test env) 2>/dev/null; then
@@ -355,7 +469,7 @@ assert_arg --mount
 assert_arg "type=bind,\"src=$real_q\",\"dst=/home/work/repos/$weird_q\""
 echo 'PASS: mount strategy quotes a project directory with : , and "'
 
-run_sandbox DOCKERSAND_GIT_STRATEGY=clone DOCKERSAND_SESSION_NAME=weird
+run_sandbox DOCKERSAND_GIT_STRATEGY=clone DOCKERSAND_SESSION=weird
 assert_no_v
 checkout_name="$weird-$(printf %s "$real" | sha256sum | cut -c1-8)"
 assert_arg "type=bind,\"src=${XDG_STATE_HOME//\"/\"\"}/dockersand/repos/${checkout_name//\"/\"\"}/weird\",\"dst=/home/work/repos\""
@@ -368,3 +482,10 @@ assert_no_v
 assert_arg "type=bind,\"src=$fixture/ssh:agent.sock\",\"dst=/tmp/ssh-agent.sock\""
 assert_arg "type=bind,\"src=$fixture/home/.ssh/known_hosts\",\"dst=/home/work/.ssh/known_hosts\",readonly"
 echo 'PASS: SSH mounts are quoted and known_hosts is read-only'
+
+cp "$DOCKERSAND_ARGS_FILE" "$fixture/ssh-args"
+(cd "$repo" && DOCKERSAND_GIT_STRATEGY=mount DOCKERSAND_SSH=0 \
+  HOME="$fixture/home" SSH_AUTH_SOCK="$fixture/ssh:agent.sock" "$launcher" run --ssh test env) \
+  2>"$fixture/stderr" || { cat "$fixture/stderr" >&2; fail '--ssh launch failed'; }
+cmp -s "$fixture/ssh-args" "$DOCKERSAND_ARGS_FILE" || fail '--ssh differs from DOCKERSAND_SSH=1'
+echo 'PASS: --ssh matches the environment opt-in and overrides DOCKERSAND_SSH=0'

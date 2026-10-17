@@ -15,7 +15,7 @@ trap cleanup EXIT
 mkdir -p "$fixture/bin" "$fixture/project" "$fixture/runtime"
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 export XDG_STATE_HOME="$fixture/state" DOCKERSAND_ARGS_FILE="$fixture/args"
-unset DOCKERSAND_DBUS DOCKERSAND_SSH DOCKERSAND_EGRESS DOCKERSAND_SESSION_NAME
+unset DOCKERSAND_DBUS DOCKERSAND_SSH DOCKERSAND_EGRESS DOCKERSAND_SESSION
 unset DOCKERSAND_DIND DOCKERSAND_GCLOUD DOCKERSAND_GH
 unset DBUS_SESSION_BUS_ADDRESS DBUS_SYSTEM_BUS_ADDRESS XDG_RUNTIME_DIR
 unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR
@@ -148,10 +148,18 @@ assert_forwarded "$socket"
 assert_arg "type=bind,\"src=$fixture/ssh-agent.sock\",\"dst=/tmp/ssh-agent.sock\""
 echo 'PASS: D-Bus and SSH forwarding work together'
 
+cp "$DOCKERSAND_ARGS_FILE" "$fixture/forwarding-args"
+(cd "$fixture/project" && DOCKERSAND_GIT_STRATEGY=mount DOCKERSAND_DBUS=0 DOCKERSAND_SSH=0 \
+  DBUS_SESSION_BUS_ADDRESS="unix:path=$socket" SSH_AUTH_SOCK="$fixture/ssh-agent.sock" \
+  "$launcher" run --ssh --dbus -- test env) 2>"$fixture/stderr" ||
+  { cat "$fixture/stderr" >&2; fail 'forwarding switches failed'; }
+cmp -s "$fixture/forwarding-args" "$DOCKERSAND_ARGS_FILE" || fail 'forwarding switches differ from environment opt-ins'
+echo 'PASS: --ssh and --dbus combine and override environment opt-outs'
+
 git -C "$fixture/project" init -q
 git -C "$fixture/project" -c user.name=Fixture -c user.email=fixture@example.test \
   commit -q --allow-empty -m initial
 run_sandbox DOCKERSAND_DBUS=1 "DBUS_SESSION_BUS_ADDRESS=unix:path=$socket" \
-  DOCKERSAND_GIT_STRATEGY=clone DOCKERSAND_SESSION_NAME=dbus
+  DOCKERSAND_GIT_STRATEGY=clone DOCKERSAND_SESSION=dbus
 assert_forwarded "$socket"
 echo 'PASS: forwarding works with the clone strategy'
