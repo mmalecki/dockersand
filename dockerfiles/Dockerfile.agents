@@ -5,6 +5,7 @@ RUN apt install -y --no-install-recommends \
     ca-certificates git curl wget unzip zip xz-utils \
     ripgrep fd-find jq less file tree procps shellcheck \
     build-essential python3 python3-pip python3-venv \
+    golang-go gopls delve \
     openssh-client netcat-openbsd gnupg uidmap slirp4netns iproute2 \
     dbus-bin libnotify-bin libsecret-tools \
  && ln -s /usr/bin/fdfind /usr/local/bin/fd \
@@ -80,7 +81,10 @@ ARG RUST_VERSION=1.99
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain="$RUST_VERSION"
 
 # Rootless Docker needs administration tools such as sysctl and iptables.
-ENV PATH="$FNM_DIR:$FNM_DIR/aliases/default/bin:/home/work/.npm/bin:/home/work/.cargo/bin:/usr/local/sbin:/usr/sbin:/sbin:$PATH"
+ENV PATH="$FNM_DIR:$FNM_DIR/aliases/default/bin:/home/work/.npm/bin:/home/work/.cargo/bin:/home/work/go/bin:/usr/local/sbin:/usr/sbin:/sbin:$PATH"
+
+# Developer privacy: keep Go and gopls telemetry fully off, not just local-only
+RUN go telemetry off
 
 RUN npm config set prefix "/home/work/.npm"
 
