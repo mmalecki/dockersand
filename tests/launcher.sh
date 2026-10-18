@@ -153,7 +153,7 @@ fi
 if (cd "$repo" && DOCKERSAND_GIT_STRATEGY=mount "$launcher" run --session identity test) 2>"$fixture/stderr"; then
   fail 'accepted --session with mount strategy'
 fi
-rg -Fq 'DOCKERSAND_SESSION needs DOCKERSAND_GIT_STRATEGY=clone' "$fixture/stderr" || fail 'missing session strategy diagnostic'
+grep -Fq 'DOCKERSAND_SESSION needs DOCKERSAND_GIT_STRATEGY=clone' "$fixture/stderr" || fail 'missing session strategy diagnostic'
 [[ ! -e "$DOCKERSAND_ARGS_FILE" ]] || fail 'docker run called for an invalid session'
 echo 'PASS: invalid session names, missing values and mount strategy are rejected'
 
@@ -163,7 +163,7 @@ for option in --git-strategy --entrypoint --host-gateway; do
     if (cd "$repo" && "$launcher" run "$option" "${argv[@]}") 2>"$fixture/stderr"; then
       fail "accepted missing value for $option"
     fi
-    rg -Fq -- "$option requires a value" "$fixture/stderr" || fail "missing diagnostic for $option"
+    grep -Fq -- "$option requires a value" "$fixture/stderr" || fail "missing diagnostic for $option"
     [[ ! -e "$DOCKERSAND_ARGS_FILE" ]] || fail "docker run called without a value for $option"
   done
 done
@@ -221,12 +221,12 @@ for arguments in '' test '--sessions list' '-- test' 'run' 'run --' 'run --dind'
   if (cd "$repo" && DOCKERSAND_GIT_STRATEGY=mount "$launcher" "${argv[@]}") >/dev/null 2>"$fixture/stderr"; then
     fail "accepted invalid arguments: $arguments"
   fi
-  rg -Fq 'usage: dockersand run [options] [--] <app>' "$fixture/stderr" || fail "missing usage for: $arguments"
+  grep -Fq 'usage: dockersand run [options] [--] <app>' "$fixture/stderr" || fail "missing usage for: $arguments"
   [[ ! -e "$DOCKERSAND_ARGS_FILE" ]] || fail "docker run called for: $arguments"
 done
 for help in -h --help; do
   "$launcher" "$help" >"$fixture/stdout" || fail "$help failed"
-  rg -Fq 'usage: dockersand run [options] [--] <app>' "$fixture/stdout" || fail "$help did not print usage"
+  grep -Fq 'usage: dockersand run [options] [--] <app>' "$fixture/stdout" || fail "$help did not print usage"
 done
 echo 'PASS: bare apps and unknown subcommands print usage without launching'
 

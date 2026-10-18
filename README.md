@@ -12,7 +12,7 @@ It's like pocket sand - it certainly won't stop anyone, but it'll definitely may
 ## Installation
 
 Prerequisites: [gVisor installed and configured as a Docker runtime](https://gvisor.dev/docs/user_guide/quick_start/docker/).
-If you would like to use SSH forwarding, configure runsc with `--host-uds=open`, and set `DOCKERSAND_SSH=1` when running.
+If you would like to use SSH forwarding, configure runsc with `--host-uds=open`, and pass `--ssh` when running.
 Session D-Bus forwarding also requires `--host-uds=open`.
 
 For now, installation is manual. Drop every `dockersand*` script on your `PATH`.
@@ -42,7 +42,7 @@ outside a git repo) you are in at `/home/work/repos/<repo-name>` (where `repo-na
 If you are in a repository subdirectory, it drops you into the same one in the sandbox as well.
 
 Options go before the app name. Arguments after the app name pass through unchanged.
-Command-line options override their corresponding environment variables; environment variables remain supported.
+Each option overrides its environment variable.
 
 | Option | Environment variable | Effect |
 | --- | --- | --- |
@@ -58,9 +58,6 @@ Command-line options override their corresponding environment variables; environ
 | `--egress` | `DOCKERSAND_EGRESS=1` | Enable allowlisted egress |
 
 For example: `dockersand run --session feature --ssh --gh codex`.
-
-By default (inside a git repository) the sandbox works in a separate clone, so it doesn't see uncommitted changes
-and can't modify your `.git`. Use `DOCKERSAND_GIT_STRATEGY=mount` to work in the checkout directly.
 
 The easiest way to explore the environment (without building anything) is running `dockersand run alpine`.
 If you've built the base images, running `dockersand run bash` will get you the same environment the agent images run in.
@@ -84,7 +81,7 @@ mount only what the app needs.
 
 ### Git strategy
 
-`DOCKERSAND_GIT_STRATEGY` selects what the sandbox works in: `clone` (the default) or `mount`.
+`--git-strategy` selects what the sandbox works in: `clone` (the default) or `mount`.
 
 With `clone`, the sandbox works in a separate clone, so it doesn't see uncommitted changes and can't modify your
 `.git`. Each `dockersand run` is a new session with its own clone, kept at `~/.local/state/dockersand/repos/<checkout>/<session>/<repo-name>`,
@@ -97,8 +94,8 @@ New clones preserve all fetch and push URLs for each remote, including separate 
 Host `insteadOf` and `pushInsteadOf` rules are resolved when the session is created, so the URLs work without
 mounting your gitconfig. Resuming a session keeps its existing remote configuration.
 
-The session name is random and printed at startup. Use `--session <name>` or set `DOCKERSAND_SESSION` to resume a session, or to give a
-new one a memorable name:
+The session name is random and printed at startup. Use `--session <name>` to resume a session, or to give a new one
+a memorable name:
 
     dockersand run --session <session> <app> [args...]
 
@@ -115,9 +112,9 @@ sandbox's control. Sessions accumulate, each a full clone: delete a session's di
 
 This works best with workflows which end in PRs/branches being pushed to the target repository by the agent,
 and is suitable for running potentially destructive actions on the sandboxed repository. Note that it only
-protects your working copy: the clone keeps your remotes, so with `DOCKERSAND_SSH=1` the sandbox can still push to them.
+protects your working copy: the clone keeps your remotes, so with `--ssh` the sandbox can still push to them.
 
-Use `DOCKERSAND_GIT_STRATEGY=mount` to work directly in the checkout, including its `.git`. That means the sandbox can
+Use `--git-strategy mount` to work directly in the checkout, including its `.git`. That means the sandbox can
 plant hooks or config (e.g. `core.fsmonitor`) that your host git later executes. It also doesn't work from
 linked git worktrees, whose `.git` points outside the mount. Outside a git repository the default is to mount
 the directory (equivalent to `mount`).
@@ -128,19 +125,14 @@ the directory (equivalent to `mount`).
 dockersand sessions list
 ```
 
-Lists present and past clone sessions. Each row shows the session ID, state, absolute host sandbox
-directory, container name, and command. The directory contains the aforementioned clone and any sibling worktrees.
+Lists clone sessions, one per row: session ID, state, host sandbox directory (the clone and any sibling
+worktrees), container name and command.
 
-Live states come from Docker (`running`, `paused`, `restarting`, etc.). The command is the container's
-root process executable, including its arguments. Arguments are quoted and escaped.
-The container name matches the NAMES column of `docker ps` and can be passed to `docker exec`, `docker logs`,
-etc. Docker assigns a new container ID on every run, so use the name to match sessions to containers.
-Saved sessions without a container show `idle`. Sessions without a container show `—` for the name, and
-sessions without a live command show `—` for the command.
-If Docker cannot be queried, affected sessions show `unknown`, a diagnostic is printed to stderr, and
-the command exits unsuccessfully. An empty session list prints only the column headers.
+The state comes from Docker (`running`, `paused`, etc.), or is `idle` for a session without a container. The
+container name is what `docker exec`, `docker logs`, etc. take. If Docker can't be queried, affected sessions show
+`unknown` and the command fails.
 
-Mount-mode sandboxes have no saved session and are not listed. Listing does not run anything inside the sandbox, or any of the hooks.
+Mount-mode sandboxes have no saved session and are not listed. Listing runs nothing inside the sandbox, and no hooks.
 
 ### Git identity
 
@@ -166,48 +158,43 @@ docker build -t my-solution .
 docker compose up --build
 ```
 
-`--dind` goes before the app name and enables nested Docker even if `DOCKERSAND_DIND=0` is set.
-`DOCKERSAND_DIND=1 dockersand run bash` remains supported. Arguments after the app name are passed to the app.
-
 The nested daemon starts on the first Docker command and runs as `work`, using a private Unix socket.
 It uses the `vfs` storage driver for compatibility with nested filesystems. Images, containers and volumes
 last for the sandbox's lifetime; Docker does not use the host daemon or its socket. Publish nested ports
 with `docker run -p` to reach them from the agent inside the sandbox. Rootless cgroup resource limits are
 unavailable without a user systemd session. Startup logs are at `/home/work/.docker/run/dockerd.log`.
-The sandbox runs under `docker run --init`, so the backgrounded daemon and other orphans are reaped.
 
 ### Entrypoint override
 
-`DOCKERSAND_ENTRYPOINT` overrides the image's default entrypoint. Any `[args...]` are passed to the new entrypoint:
+`--entrypoint` overrides the image's default entrypoint. Any `[args...]` are passed to the new entrypoint:
 
 ```sh
-DOCKERSAND_ENTRYPOINT=/bin/bash dockersand run <app> -l
+dockersand run --entrypoint /bin/bash <app> -l
 ```
 
 This is useful when debugging per-app hooks, environment setup, etc.
 
 ### SSH forwarding
 
-Set `DOCKERSAND_SSH=1` to forward the SSH agent into the sandbox. If `SSH_AUTH_SOCK` is present, it is passed in,
+`--ssh` forwards the SSH agent into the sandbox. If `SSH_AUTH_SOCK` is present, it is passed in,
 alongside a `.ssh/known_hosts` mount. This requires that gVisor is configured with the `--host-uds=open` flag.
-The `known_hosts` mount is only added when `DOCKERSAND_SSH=1`, since `known_hosts` lists every host you've SSHed to.
-
-If `DOCKERSAND_SSH` is `1` but `SSH_AUTH_SOCK` is not set, no agent socket is forwarded (no error is raised).
+The `known_hosts` mount is only added with `--ssh`, since `known_hosts` lists every host you've SSHed to.
+Without `SSH_AUTH_SOCK`, no agent socket is forwarded, and no error is raised.
 
 ```sh
-DOCKERSAND_SSH=1 dockersand run <app> [args...]
+dockersand run --ssh <app> [args...]
 ```
 
 ### Egress filtering
 
-`DOCKERSAND_EGRESS=1` enables egress filtering by creating the sandbox in a network with no route to the outside, except
+`--egress` enables egress filtering by creating the sandbox in a network with no route to the outside, except
 through a Squid HTTP + SSH proxy. A running egress proxy (with an example Docker Compose setup in [`egress-proxy`](./egress-proxy/))
 is required:
 
 ```sh
 cd egress-proxy
 docker compose up -d
-DOCKERSAND_EGRESS=1 dockersand run <app> [args...]
+dockersand run --egress <app> [args...]
 ```
 
 The `squid.permissive.conf` file in that directory is the default - it enables access to everything except your private
@@ -215,36 +202,36 @@ network and the host.
 `squid.conf`, on the other hand, only enables traffic to major inference providers, GitHub, npm and PyPI. It will most
 likely require adjustment to fit your specific use-case.
 
-It is also possible to allow access to inference provider running on the host, as `host.docker.internal`, by
+It is also possible to allow access to an inference provider running on the host, as `host.docker.internal`, by
 uncommenting `http_access allow host_services` rules in configuration, but
 keep in mind that your host's firewall will treat this traffic like any other,
 so you may need to open up some ports.
 
 ### gcloud
 
-The `agents` base image includes the Google Cloud CLI. Set `DOCKERSAND_GCLOUD=1` to authenticate it with an access token
+The `agents` base image includes the Google Cloud CLI. `--gcloud` authenticates it with an access token
 from the host's `gcloud auth print-access-token`, and to pass in the host's default project as `CLOUDSDK_CORE_PROJECT`.
 `~/.config/gcloud` is not mounted, so the sandbox never sees your refresh tokens or account name. The launch fails if
 the host has no `gcloud` or can't print a token.
 
 ```sh
-DOCKERSAND_GCLOUD=1 dockersand run <app> [args...]
+dockersand run --gcloud <app> [args...]
 ```
 
 While the sandbox runs, a background process on the host asks gcloud for the token every 2 minutes. Usually that returns
 gcloud's cached token, which it renews once under ~4 minutes of its hour remain. The process stops and deletes the
 token as soon as the sandbox quits, and also stops if a refresh fails, after which gcloud in the sandbox loses access
 within the hour. Tokens are kept in `$XDG_RUNTIME_DIR/dockersand` (or `~/.local/state/dockersand`). With
-`DOCKERSAND_EGRESS=1`, `squid.conf` also needs to allow `.googleapis.com`.
+`--egress`, `squid.conf` also needs to allow `.googleapis.com`.
 
 ### GitHub CLI
 
-The `agents` base image includes the GitHub CLI. Set `DOCKERSAND_GH=1` to pass the host's token, from `gh auth token`,
+The `agents` base image includes the GitHub CLI. `--gh` passes the host's token, from `gh auth token`,
 into the sandbox as `GH_TOKEN`. `~/.config/gh` is not mounted. The launch fails if the host has no `gh` or isn't
 logged in.
 
 ```sh
-DOCKERSAND_GH=1 dockersand run <app> [args...]
+dockersand run --gh <app> [args...]
 ```
 
 The token is read once, at launch, so changes to the host's login, such as `gh auth switch`, reach the sandbox on its
@@ -253,20 +240,18 @@ sandbox quits, until you revoke it.
 
 ### Session D-Bus forwarding
 
-Set `DOCKERSAND_DBUS=1` to let the sandbox use your host session bus:
+`--dbus` lets the sandbox use your host session bus:
 
 ```sh
-DOCKERSAND_DBUS=1 dockersand run bash
+dockersand run --dbus bash
 # Inside an agents-based image:
 notify-send "Agent finished" "The tests passed."
 secret-tool lookup service my-project account deploy
 ```
 
-The launcher reads `DBUS_SESSION_BUS_ADDRESS` and mounts its Unix filesystem socket at `/tmp/dbus-session.sock`,
-then sets the container's session address to that path. If the address is unset or empty, it uses
-`$XDG_RUNTIME_DIR/bus`, or `/run/user/$(id -u)/bus` when the runtime directory is unset. Address lists and
-percent-escaped paths are supported. Abstract Unix sockets and other transports cannot be bind-mounted;
-provide a filesystem socket address. An explicit address never falls back to a different bus.
+The launcher mounts the socket from `DBUS_SESSION_BUS_ADDRESS` (or, if that's unset, `$XDG_RUNTIME_DIR/bus` or
+`/run/user/$(id -u)/bus`) into the sandbox. Only filesystem sockets can be mounted: an address with only abstract
+sockets or other transports is an error, rather than falling back to a different bus.
 
 This requires runsc's `--host-uds=open`. The image's user must have the same numeric UID as your host user
 for D-Bus authentication. The base image defaults to UID 1000; rebuild it for a different user with
@@ -276,21 +261,20 @@ Notifications require a host notification service, and secret lookups require a 
 as GNOME Keyring or KeePassXC; locked secrets may prompt on the host desktop.
 
 Forwarding gives the sandbox access to all your session bus services, including notifications and secrets.
-This is an intentional opt-in for friendly workloads. The system bus and the rest of the runtime directory
-are not forwarded. A read-only socket mount still permits D-Bus method calls.
+The system bus and the rest of the runtime directory are not forwarded.
 
 ### Host gateway
 
 Without egress filtering, the host is reachable from the sandbox as `host.docker.internal`, for example to use an
-inference provider running on the host. `DOCKERSAND_HOST_GATEWAY` changes the name; set it empty to omit it:
+inference provider running on the host. `--host-gateway` changes the name; set it empty to omit it:
 
 ```sh
-DOCKERSAND_HOST_GATEWAY=host.internal dockersand run <app> [args...]
+dockersand run --host-gateway host.internal <app> [args...]
 dockersand run --host-gateway '' <app> [args...]
 ```
 
 Omitting the name doesn't block access to the host: the sandbox can still reach it by the gateway IP. Only egress
-filtering does that. With `DOCKERSAND_EGRESS=1`, this variable is ignored, as the sandbox reaches the host through
+filtering does that. With `--egress`, this option is ignored, as the sandbox reaches the host through
 the proxy (see below).
 
 ## Alternatives
@@ -308,7 +292,7 @@ Run `bash tests/sessions.sh` to check session discovery, live status, and Docker
 After rebuilding the images, test nested builds, networking and Compose with:
 
 ```sh
-DOCKERSAND_GIT_STRATEGY=mount DOCKERSAND_DIND=1 dockersand run bash tests/dind.sh
+dockersand run --git-strategy mount --dind bash tests/dind.sh
 ```
 
 Run `bash tests/dbus.sh` to check session-bus selection, address parsing, and opt-in behavior. The test uses
