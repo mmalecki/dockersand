@@ -50,6 +50,7 @@ Each option overrides its environment variable.
 | `--git-strategy <mode>` | `DOCKERSAND_GIT_STRATEGY=<mode>` | Select `clone` or `mount` |
 | `--entrypoint <path>` | `DOCKERSAND_ENTRYPOINT=<path>` | Override the image entrypoint |
 | `--host-gateway <name>` | `DOCKERSAND_HOST_GATEWAY=<name>` | Name the host; `''` disables the mapping |
+| `-p`, `--publish <spec>` | `DOCKERSAND_PUBLISH='<spec> ...'` | Publish a port, on `127.0.0.1` by default |
 | `--dind` | `DOCKERSAND_DIND=1` | Enable nested Docker |
 | `--dbus` | `DOCKERSAND_DBUS=1` | Forward the host session bus |
 | `--gcloud` | `DOCKERSAND_GCLOUD=1` | Forward a Google Cloud access token |
@@ -276,6 +277,21 @@ dockersand run --host-gateway '' <app> [args...]
 Omitting the name doesn't block access to the host: the sandbox can still reach it by the gateway IP. Only egress
 filtering does that. With `--egress`, this option is ignored, as the sandbox reaches the host through
 the proxy (see below).
+
+### Publishing ports
+
+`-p` publishes a sandbox port on the host, taking `docker run -p` specs. Repeat it for more ports:
+
+```sh
+dockersand run -p 3000 -p 8080:80 <app> [args...]
+```
+
+Unlike `docker run`, ports bind to `127.0.0.1` unless the spec names a host address, so they aren't
+reachable from your network. Name one to change that, e.g. `-p 0.0.0.0:8080:80` or `-p '[::1]:8080:80'`.
+A spec without a host port, like `3000`, gets a random one; `docker port <container>` shows it.
+
+`DOCKERSAND_PUBLISH` takes space-separated specs. Any `-p` replaces them all. Publishing doesn't work with
+`--egress`, since the sandbox's network has no route to the host.
 
 ## Alternatives
 There are scores of us, dozens even! If you are looking for agent isolation
