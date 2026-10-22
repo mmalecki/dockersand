@@ -472,6 +472,32 @@ network_args() {
   fi
 }
 
+# DOCKERSAND_PUBLISH: space-separated docker run -p specs. Docker binds a
+# spec without a host address to every interface, so default to loopback.
+publish_args() {
+  local spec port='[0-9]+(-[0-9]+)?' proto='(/(tcp|udp|sctp))?'
+  local -a specs
+  read -ra specs <<<"${DOCKERSAND_PUBLISH:-}"
+  (( ${#specs[@]} )) || return 0
+  # The internal network has no route to the host; Docker silently ignores
+  # ports published on it
+  if [[ "${DOCKERSAND_EGRESS:-}" == 1 ]]; then
+    echo "DOCKERSAND_PUBLISH doesn't work with DOCKERSAND_EGRESS=1" >&2
+    exit 1
+  fi
+  for spec in "${specs[@]}"; do
+    if [[ "$spec" =~ ^$port$proto$ ]]; then
+      spec="127.0.0.1::$spec"
+    elif [[ "$spec" =~ ^$port:$port$proto$ ]]; then
+      spec="127.0.0.1:$spec"
+    elif [[ ! "$spec" =~ ^(\[[0-9A-Fa-f:.]+\]|[0-9.]+):($port)?:$port$proto$ ]]; then
+      echo "invalid port to publish: $spec" >&2
+      exit 1
+    fi
+    sandbox_args+=(-p "$spec")
+  done
+}
+
 usage() {
   printf '%s\n' 'usage: dockersand run [options] [--] <app> [args...]' '       dockersand sessions list' \
     '' 'run options:' \
@@ -479,6 +505,7 @@ usage() {
     '  --git-strategy <mode>  Select clone or mount (DOCKERSAND_GIT_STRATEGY)' \
     '  --entrypoint <path>    Override the image entrypoint (DOCKERSAND_ENTRYPOINT)' \
     '  --host-gateway <name>  Name the host; empty disables (DOCKERSAND_HOST_GATEWAY)' \
+    '  -p, --publish <spec>   Publish a port, on 127.0.0.1 by default (DOCKERSAND_PUBLISH)' \
     '  --dind                 Enable nested Docker (DOCKERSAND_DIND=1)' \
     '  --dbus                 Forward the session bus (DOCKERSAND_DBUS=1)' \
     '  --gcloud               Forward a Google Cloud token (DOCKERSAND_GCLOUD=1)' \
@@ -489,7 +516,7 @@ usage() {
 
 # Launches the sandbox: everything after the app passes through to the image
 run_app() {
-  local img strategy work_dir
+  local img strategy work_dir publish_set=0
 
   while (( $# )); do
     case "$1" in
@@ -519,6 +546,17 @@ run_app() {
         esac
         shift 2
         ;;
+      -p | --publish)
+        if (( $# < 2 )) || [[ "$2" == -* || "$2" == *[[:space:]]* ]]; then
+          echo "$1 requires a port" >&2
+          exit 1
+        fi
+        # Repeatable: the first one replaces the environment's ports
+        (( publish_set )) || DOCKERSAND_PUBLISH=""
+        publish_set=1
+        export DOCKERSAND_PUBLISH="${DOCKERSAND_PUBLISH:+$DOCKERSAND_PUBLISH }$2"
+        shift 2
+        ;;
       --) shift; break ;;
       *) break ;;
     esac
@@ -540,6 +578,9 @@ run_app() {
   if (( in_repo )) && docker image inspect "$repo_dir-$app" >/dev/null 2>&1; then
     img="$repo_dir-$app"
   fi
+
+  # Before prepare_clone, so an invalid port doesn't leave a session behind
+  publish_args
 
   mount_src="$rp_repo"
   mount_dst="/home/work/repos/$repo_dir"
