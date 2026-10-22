@@ -14,6 +14,7 @@ unset GIT_AUTHOR_DATE GIT_COMMITTER_DATE EMAIL GIT_CONFIG_COUNT
 unset DOCKERSAND_DIND DOCKERSAND_EGRESS DOCKERSAND_SESSION DOCKERSAND_SSH
 unset DOCKERSAND_GCLOUD DOCKERSAND_GH GH_TOKEN XDG_RUNTIME_DIR
 unset DOCKERSAND_DBUS DOCKERSAND_ENTRYPOINT DOCKERSAND_HOST_GATEWAY DOCKERSAND_GIT_STRATEGY
+unset DOCKERSAND_PUBLISH
 unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR
 
 # Capture the actual docker run argv; no daemon is needed for these tests.
@@ -187,6 +188,52 @@ assert_no_arg --entrypoint
 assert_no_arg --add-host
 echo 'PASS: entrypoint and host gateway switches override environment values, including empty values'
 
+# Each -p value, in order
+published() {
+  local i
+  ports=()
+  for i in "${!args[@]}"; do
+    [[ "${args[$i]}" != -p ]] || ports+=("${args[$((i + 1))]}")
+  done
+}
+
+run_sandbox
+published
+(( ! ${#ports[@]} )) || fail 'ports published without DOCKERSAND_PUBLISH'
+run_sandbox DOCKERSAND_PUBLISH='80 8080:80 8000-8010:8000-8010/udp 0.0.0.0:9090:90 [::1]:9091:91/tcp 127.0.0.2::92'
+published
+expected=(127.0.0.1::80 127.0.0.1:8080:80 127.0.0.1:8000-8010:8000-8010/udp 0.0.0.0:9090:90 '[::1]:9091:91/tcp' 127.0.0.2::92)
+[[ "${ports[*]}" == "${expected[*]}" ]] || fail "unexpected published ports: ${ports[*]}"
+echo 'PASS: published ports default to loopback and keep explicit host addresses'
+
+DOCKERSAND_PUBLISH=ignored run_cli -p 80 --publish 8080:80 test env
+published
+[[ "${ports[*]}" == '127.0.0.1::80 127.0.0.1:8080:80' ]] || fail "-p did not replace the environment: ${ports[*]}"
+echo 'PASS: -p and --publish repeat and override DOCKERSAND_PUBLISH'
+
+for options in '-p' '--publish' '-p --ssh test' '-p -1 test' '-p 80:80:80:80 test' '-p host:80:80 test' '-p 80/icmp test' '-p :80 test'; do
+  read -ra argv <<<"$options"
+  rm -f "$DOCKERSAND_ARGS_FILE"
+  if (cd "$repo" && DOCKERSAND_GIT_STRATEGY=mount "$launcher" run "${argv[@]}") 2>"$fixture/stderr"; then
+    fail "accepted invalid port: $options"
+  fi
+  [[ ! -e "$DOCKERSAND_ARGS_FILE" ]] || fail "docker run called for: $options"
+done
+if (cd "$repo" && DOCKERSAND_GIT_STRATEGY=mount "$launcher" run -p '80 81' test) 2>"$fixture/stderr"; then
+  fail 'accepted a -p value with a space'
+fi
+if (cd "$repo" && DOCKERSAND_GIT_STRATEGY=clone DOCKERSAND_SESSION=badport "$launcher" run -p bad test) 2>"$fixture/stderr"; then
+  fail 'accepted an invalid port in clone mode'
+fi
+[[ ! -e "$XDG_STATE_HOME/dockersand/repos/$(basename "$repo")-$(printf %s "$(realpath "$repo")" | sha256sum | cut -c1-8)/badport" ]] ||
+  fail 'invalid port left a session behind'
+if (cd "$repo" && DOCKERSAND_GIT_STRATEGY=mount FAKE_EGRESS_PROXY=1 "$launcher" run --egress -p 80 test) 2>"$fixture/stderr"; then
+  fail 'accepted -p with --egress'
+fi
+grep -Fq "DOCKERSAND_PUBLISH doesn't work with DOCKERSAND_EGRESS=1" "$fixture/stderr" || fail 'missing egress diagnostic'
+[[ ! -e "$DOCKERSAND_ARGS_FILE" ]] || fail 'docker run called with -p and --egress'
+echo 'PASS: invalid ports and publishing with egress filtering are rejected'
+
 run_sandbox DOCKERSAND_EGRESS=1 FAKE_EGRESS_PROXY=1
 assert_arg dockersand-internal
 assert_arg HTTP_PROXY=http://172.30.0.2:3128
@@ -325,7 +372,7 @@ for setting in '' 0 1; do
 done
 echo 'PASS: --dind matches the environment opt-in and overrides DOCKERSAND_DIND=0'
 
-app_args=(--dind --dbus --gcloud --gh --ssh --egress --session 'two words' --git-strategy mount --entrypoint /bin/bash --host-gateway '')
+app_args=(--dind --dbus --gcloud --gh --ssh --egress --session 'two words' --git-strategy mount --entrypoint /bin/bash --host-gateway '' -p 80)
 (cd "$repo" && DOCKERSAND_GIT_STRATEGY=mount "$launcher" run test "${app_args[@]}") \
   2>"$fixture/stderr" || { cat "$fixture/stderr" >&2; fail 'app argument launch failed'; }
 mapfile -d '' -t args <"$DOCKERSAND_ARGS_FILE"
