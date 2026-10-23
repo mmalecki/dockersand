@@ -125,8 +125,10 @@ the directory (equivalent to `mount`).
 dockersand sessions list
 ```
 
-Lists clone sessions, one per row: session ID, state, host sandbox directory (the clone and any sibling
-worktrees), container name and command.
+Lists clone sessions, one per row: session ID, state, creation time, host sandbox directory (the clone and any
+sibling worktrees), container name and command.
+
+The creation time is the birth time of the sandbox directory, or `—` on filesystems that don't record one.
 
 The state comes from Docker (`running`, `paused`, etc.), or is `idle` for a session without a container. The
 container name is what `docker exec`, `docker logs`, etc. take. If Docker can't be queried, affected sessions show
