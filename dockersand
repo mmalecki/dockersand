@@ -25,7 +25,7 @@ has_line() {
 }
 
 sessions_list() {
-  local root dir checkout session container_name names details prefix status container command
+  local root dir checkout session container_name names details prefix status container command created
   local result=0 docker_available=1
   local -a directories=()
   root="$(realpath -m "$state/repos")"
@@ -38,7 +38,7 @@ sessions_list() {
     directories+=("$dir")
   done
 
-  printf '%-20s %-12s %s\t%s\t%s\n' 'SESSION ID' STATE 'SANDBOX DIRECTORY' CONTAINER COMMAND
+  printf '%-20s %-12s %-16s %s\t%s\t%s\n' 'SESSION ID' STATE CREATED 'SANDBOX DIRECTORY' CONTAINER COMMAND
   ((${#directories[@]})) || return 0
   if ! names="$(docker_container_names)"; then
     docker_available=0
@@ -48,6 +48,15 @@ sessions_list() {
     session="${dir##*/}"
     checkout="${dir%/*}"
     container_name="$(session_container_name "${checkout##*/}" "$session")"
+    # Birth time of the mount root, made on the session's first run. Unlike
+    # its mtime, the sandbox can't change it. 0 if the filesystem lacks it.
+    created="$(stat -c %W -- "$dir" 2>/dev/null)" || created=0
+    if [[ "$created" =~ ^[1-9][0-9]*$ ]]; then
+      printf -v created '%(%Y-%m-%d %H:%M)T' "$created"
+    else
+      # Padded here: printf pads by bytes, and — is three
+      printf -v created '—%15s' ''
+    fi
     status=idle
     container=—
     command=—
@@ -84,7 +93,7 @@ sessions_list() {
         fi
       fi
     fi
-    printf '%-20s %-12s %q\t%s\t%s\n' "$session" "$status" "$dir" "$container" "$command"
+    printf '%-20s %-12s %-16s %q\t%s\t%s\n' "$session" "$status" "$created" "$dir" "$container" "$command"
   done
   if (( result )); then
     echo 'unable to query Docker for some sessions; their states are unknown' >&2
