@@ -2,7 +2,7 @@ FROM debian:trixie
 
 RUN apt update -y && apt upgrade -y
 RUN apt install -y --no-install-recommends \
-    ca-certificates git curl wget unzip zip xz-utils \
+    ca-certificates git curl wget unzip zip xz-utils dnsutils \
     ripgrep fd-find jq less file tree procps shellcheck \
     build-essential python3 python3-pip python3-venv \
     golang-go gopls delve \
