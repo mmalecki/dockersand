@@ -1,4 +1,5 @@
-FROM agents
+ARG BASE=agents
+FROM ${BASE}
 
 RUN npm install -g @openai/codex
 ENTRYPOINT ["codex"]
