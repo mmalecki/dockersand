@@ -1,3 +1,4 @@
-FROM agents
+ARG BASE=agents
+FROM ${BASE}
 RUN npm install -g @anthropic-ai/claude-code @opencode/cli @openai/codex
 RUN npm install -g --ignore-scripts @earendil-works/pi-coding-agent

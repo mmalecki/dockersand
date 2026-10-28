@@ -1,3 +1,4 @@
-FROM agents
+ARG BASE=agents
+FROM ${BASE}
 RUN npm install -g @anthropic-ai/claude-code
 ENTRYPOINT ["claude"]

@@ -1,2 +1,3 @@
-FROM agents
+ARG BASE=agents
+FROM ${BASE}
 ENTRYPOINT ["bash"]

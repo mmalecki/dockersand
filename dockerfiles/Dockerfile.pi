@@ -1,3 +1,4 @@
-FROM agents
+ARG BASE=agents
+FROM ${BASE}
 RUN npm install -g --ignore-scripts @earendil-works/pi-coding-agent
 ENTRYPOINT ["pi"]
