@@ -18,7 +18,7 @@ Session D-Bus forwarding also requires `--host-uds=open`.
 For now, installation is manual. Drop every `dockersand*` script on your `PATH`.
 
 You will also need to build and tag the images you would like to use. The example `Dockerfile`s in `dockerfiles/` are
-`claude`, `codex`, `opencode`, `bash`, and a base image for them all: `agents`. To build the full suite:
+`claude`, `codex`, `opencode`, `bash`, `chromium`, and a base image for them all: `agents`. To build the full suite:
 
 ```sh
 docker build -t agents -f dockerfiles/Dockerfile.agents .
@@ -26,7 +26,11 @@ docker build -t bash -f dockerfiles/Dockerfile.bash .
 docker build -t claude -f dockerfiles/Dockerfile.claude .
 docker build -t codex -f dockerfiles/Dockerfile.codex .
 docker build -t opencode -f dockerfiles/Dockerfile.opencode .
+docker build -t chromium -f dockerfiles/Dockerfile.chromium .
 ```
+
+The derived images build on `agents` by default. Pass `--build-arg BASE=<image>` to build on another image instead,
+such as `chromium`.
 
 `dockersand` is not prescriptive - it'll work with any Docker image you supply it.
 Please note: the images do no dependency pinning due to maintenance cost. Supply your own images if that's not acceptable to you.
@@ -240,6 +244,20 @@ The token is read once, at launch, so changes to the host's login, such as `gh a
 next launch. It carries every scope of your host login, and the sandbox can read it, so it stays usable after the
 sandbox quits, until you revoke it.
 
+### Chromium
+
+The `chromium` image adds Debian's Chromium to `agents`. It configures `chrome-devtools-mcp` in
+`~/.config/cd4a/config.json` to launch Chromium headless, so the MCP server needs no arguments. Chromium keeps its own
+sandbox, which needs user namespaces inside the container. To give an agent a browser, build its image on `chromium`:
+
+```sh
+docker build -t chromium -f dockerfiles/Dockerfile.chromium .
+docker build --build-arg BASE=chromium -t claude -f dockerfiles/Dockerfile.claude .
+```
+
+The image turns off the MCP server's usage statistics, and its CrUX lookups, which send the URLs of performance
+traces to Google.
+
 ### Session D-Bus forwarding
 
 `--dbus` lets the sandbox use your host session bus:
@@ -295,6 +313,12 @@ After rebuilding the images, test nested builds, networking and Compose with:
 
 ```sh
 dockersand run --git-strategy mount --dind bash tests/dind.sh
+```
+
+Check that `chrome-devtools-mcp` drives headless Chromium with its sandbox on:
+
+```sh
+dockersand run --git-strategy mount chromium bash tests/chromium.sh
 ```
 
 Run `bash tests/dbus.sh` to check session-bus selection, address parsing, and opt-in behavior. The test uses

@@ -1,0 +1,16 @@
+ARG BASE=agents
+FROM ${BASE}
+
+USER root
+RUN apt update -y \
+ && apt install -y --no-install-recommends chromium fonts-liberation \
+ && rm -rf /var/lib/apt/lists/*
+USER work:work
+
+# chrome-devtools-mcp only looks for Google Chrome by default, and the sandbox has no display.
+# Developer privacy: don't send performance trace URLs to the CrUX API
+RUN mkdir -p /home/work/.config/cd4a \
+ && printf '%s\n' '{"executablePath": "/usr/bin/chromium", "headless": true, "performanceCrux": false}' \
+    > /home/work/.config/cd4a/config.json
+# Developer privacy: never send chrome-devtools-mcp usage statistics
+ENV CHROME_DEVTOOLS_MCP_NO_USAGE_STATISTICS=1
