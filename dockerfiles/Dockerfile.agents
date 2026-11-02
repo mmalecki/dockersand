@@ -57,6 +57,23 @@ RUN terraform_version="${TERRAFORM_VERSION#v}" \
  && rm /tmp/terraform.zip \
  && chmod 755 /usr/local/bin/terraform
 
+ARG ZIG_VERSION=0.17.0
+RUN case "$(dpkg --print-architecture)" in \
+      amd64) zig_arch=x86_64 ;; \
+      arm64) zig_arch=aarch64 ;; \
+      *) echo "Unsupported Zig architecture: $(dpkg --print-architecture)" >&2; exit 1 ;; \
+    esac \
+ && curl -fsSL https://ziglang.org/download/index.json -o /tmp/zig-index.json \
+ && zig_url=$(jq -er --arg version "$ZIG_VERSION" --arg platform "$zig_arch-linux" '.[$version][$platform].tarball' /tmp/zig-index.json) \
+ && zig_sha256=$(jq -er --arg version "$ZIG_VERSION" --arg platform "$zig_arch-linux" '.[$version][$platform].shasum' /tmp/zig-index.json) \
+ && curl -fsSL "$zig_url" -o /tmp/zig.tar.xz \
+ && echo "$zig_sha256  /tmp/zig.tar.xz" | sha256sum -c - \
+ && mkdir -p /opt/zig \
+ && tar -xJf /tmp/zig.tar.xz -C /opt/zig --strip-components=1 \
+ && ln -s /opt/zig/zig /usr/local/bin/zig \
+ && zig version \
+ && rm /tmp/zig-index.json /tmp/zig.tar.xz
+
 ARG UV_VERSION=latest
 RUN if [ "$UV_VERSION" = latest ]; then uv_path=uv; else uv_path="uv/$UV_VERSION"; fi \
  && curl -fsSL "https://astral.sh/$uv_path/install.sh" \
