@@ -56,6 +56,7 @@ Each option overrides its environment variable.
 | `--gh` | `DOCKERSAND_GH=1` | Forward a GitHub token |
 | `--ssh` | `DOCKERSAND_SSH=1` | Forward the SSH agent and known_hosts |
 | `--egress` | `DOCKERSAND_EGRESS=1` | Enable allowlisted egress |
+| `--ephemeral-tmp` | `DOCKERSAND_EPHEMERAL_TMP=1` | Don't keep a clone session's `/tmp` |
 
 For example: `dockersand run --session feature --ssh --gh codex`.
 
@@ -84,11 +85,11 @@ mount only what the app needs.
 `--git-strategy` selects what the sandbox works in: `clone` (the default) or `mount`.
 
 With `clone`, the sandbox works in a separate clone, so it doesn't see uncommitted changes and can't modify your
-`.git`. Each `dockersand run` is a new session with its own clone, kept at `~/.local/state/dockersand/repos/<checkout>/<session>/<repo-name>`,
+`.git`. Each `dockersand run` is a new session with its own clone, kept at `~/.local/state/dockersand/sessions/<checkout>/<session>/repos/<repo-name>`,
 so sandboxes started from the same checkout don't share anything. The clone starts on your current branch, has
 your remotes, and is independent of the working copy. Bring the work back from your sandbox:
 
-    git fetch ~/.local/state/dockersand/repos/<checkout>/<session>/<repo-name> <branch>
+    git fetch ~/.local/state/dockersand/sessions/<checkout>/<session>/repos/<repo-name> <branch>
 
 New clones preserve all fetch and push URLs for each remote, including separate push destinations.
 Host `insteadOf` and `pushInsteadOf` rules are resolved when the session is created, so the URLs work without
@@ -102,11 +103,25 @@ a memorable name:
 A session runs in at most one sandbox at a time: its container is named after it, and Docker refuses to start a
 second one.
 
-The sandbox's whole `~/repos` is `~/.local/state/dockersand/repos/<checkout>/<session>`, so anything created next to
-the clone, such as a `git worktree add ../<branch>`, persists with the session. Branches committed in those worktrees
-live in the clone, so the same `git fetch` brings them back.
+Everything a session keeps is in its session directory, `~/.local/state/dockersand/sessions/<checkout>/<session>`,
+which only you can read on the host:
 
-Never run git anywhere under `~/.local/state/dockersand/repos` on the host: hooks and config there are under the
+    <session>/
+      repos/   the sandbox's ~/repos: the clone, and anything next to it
+      tmp/     the sandbox's /tmp
+
+Anything created next to the clone, such as a `git worktree add ../<branch>`, persists with the session. Branches
+committed in those worktrees live in the clone, so the same `git fetch` brings them back.
+
+`/tmp` persists too, so scratch files agents keep there survive resuming the session. That includes whatever
+the sandbox's tools left there, such as stale lock files. `--ephemeral-tmp` gives a launch a fresh, temporary `/tmp`
+instead; the saved one is left alone, and comes back the next time the session is resumed without the flag.
+Mount mode has no session, so its `/tmp` is always temporary.
+
+Under gVisor, the persistent `/tmp` is a host bind mount, which is slower than the sandbox's own temporary
+storage. Builds that work in `/tmp` heavily may run faster with `--ephemeral-tmp`.
+
+Never run git anywhere under `~/.local/state/dockersand/sessions` on the host: hooks and config there are under the
 sandbox's control. Sessions accumulate, each a full clone: delete a session's directory to drop it, or
 `<checkout>` to drop all of a checkout's sessions.
 
@@ -125,10 +140,10 @@ the directory (equivalent to `mount`).
 dockersand sessions list
 ```
 
-Lists clone sessions, one per row: session ID, state, creation time, host sandbox directory (the clone and any
-sibling worktrees), container name and command.
+Lists clone sessions, one per row: session ID, state, creation time, host session directory (the clone, any
+sibling worktrees and `/tmp`), container name and command.
 
-The creation time is the birth time of the sandbox directory, or `—` on filesystems that don't record one.
+The creation time is the birth time of the session directory, or `—` on filesystems that don't record one.
 
 The state comes from Docker (`running`, `paused`, etc.), or is `idle` for a session without a container. The
 container name is what `docker exec`, `docker logs`, etc. take. If Docker can't be queried, affected sessions show
