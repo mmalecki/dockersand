@@ -479,7 +479,7 @@ mkdir -p "$fixture/home/.ssh"
 touch "$fixture/home/.ssh/known_hosts"
 run_sandbox DOCKERSAND_SSH=1 "HOME=$fixture/home" "SSH_AUTH_SOCK=$fixture/ssh:agent.sock"
 assert_no_v
-assert_arg "type=bind,\"src=$fixture/ssh:agent.sock\",\"dst=/tmp/ssh-agent.sock\""
+assert_arg "type=bind,\"src=$fixture/ssh:agent.sock\",\"dst=/run/dockersand/ssh-agent.sock\""
 assert_arg "type=bind,\"src=$fixture/home/.ssh/known_hosts\",\"dst=/home/work/.ssh/known_hosts\",readonly"
 echo 'PASS: SSH mounts are quoted and known_hosts is read-only'
 

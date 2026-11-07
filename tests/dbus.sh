@@ -79,8 +79,8 @@ assert_arg() {
 }
 
 assert_forwarded() {
-  assert_arg "type=bind,\"src=$1\",\"dst=/tmp/dbus-session.sock\",readonly"
-  assert_arg DBUS_SESSION_BUS_ADDRESS=unix:path=/tmp/dbus-session.sock
+  assert_arg "type=bind,\"src=$1\",\"dst=/run/dockersand/dbus-session.sock\",readonly"
+  assert_arg DBUS_SESSION_BUS_ADDRESS=unix:path=/run/dockersand/dbus-session.sock
   assert_arg --runtime=runsc
   assert_arg no-new-privileges
   local arg
@@ -145,7 +145,7 @@ echo 'PASS: missing fallback socket fails before Docker is launched'
 run_sandbox DOCKERSAND_DBUS=1 "DBUS_SESSION_BUS_ADDRESS=unix:path=$socket" \
   DOCKERSAND_SSH=1 "SSH_AUTH_SOCK=$fixture/ssh-agent.sock" DBUS_SYSTEM_BUS_ADDRESS=unix:path=/irrelevant/system-bus
 assert_forwarded "$socket"
-assert_arg "type=bind,\"src=$fixture/ssh-agent.sock\",\"dst=/tmp/ssh-agent.sock\""
+assert_arg "type=bind,\"src=$fixture/ssh-agent.sock\",\"dst=/run/dockersand/ssh-agent.sock\""
 echo 'PASS: D-Bus and SSH forwarding work together'
 
 cp "$DOCKERSAND_ARGS_FILE" "$fixture/forwarding-args"

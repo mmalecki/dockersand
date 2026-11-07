@@ -279,9 +279,12 @@ run_hook() {
 }
 
 # Needs runsc configured with --host-uds=open to connect to host sockets
+# Forwarded sockets go under /run/dockersand, not /tmp: a session's /tmp is a
+# host directory the sandbox can write to, so mount points there would be left
+# on the host, or replaced with symlinks for the next launch to mount through
 forward_ssh() {
   if [[ -n "${SSH_AUTH_SOCK:-}" ]]; then
-    sandbox_args+=(--mount "$(bind_mount "$SSH_AUTH_SOCK" /tmp/ssh-agent.sock)" -e SSH_AUTH_SOCK=/tmp/ssh-agent.sock)
+    sandbox_args+=(--mount "$(bind_mount "$SSH_AUTH_SOCK" /run/dockersand/ssh-agent.sock)" -e SSH_AUTH_SOCK=/run/dockersand/ssh-agent.sock)
   fi
   if [[ -f "$HOME/.ssh/known_hosts" ]]; then
     sandbox_args+=(--mount "$(bind_mount "$HOME/.ssh/known_hosts" /home/work/.ssh/known_hosts readonly)")
@@ -411,8 +414,8 @@ forward_dbus() {
   fi
   # Only the socket is mounted, not the rest of the host's runtime directory
   sandbox_args+=(
-    --mount "$(bind_mount "$dbus_socket" /tmp/dbus-session.sock readonly)"
-    -e DBUS_SESSION_BUS_ADDRESS=unix:path=/tmp/dbus-session.sock
+    --mount "$(bind_mount "$dbus_socket" /run/dockersand/dbus-session.sock readonly)"
+    -e DBUS_SESSION_BUS_ADDRESS=unix:path=/run/dockersand/dbus-session.sock
   )
 }
 
