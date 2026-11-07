@@ -8,7 +8,7 @@ export HOME="$fixture/home" XDG_STATE_HOME="$fixture/state with spaces"
 export MOCK_DOCKER_ROOT="$fixture/docker" TZ=UTC
 unset DOCKERSAND_GIT_STRATEGY DOCKERSAND_SESSION
 mkdir -p "$HOME" "$fixture/bin" "$MOCK_DOCKER_ROOT"
-root="$XDG_STATE_HOME/dockersand/repos"
+root="$XDG_STATE_HOME/dockersand/sessions"
 touch "$MOCK_DOCKER_ROOT/names" "$MOCK_DOCKER_ROOT/calls"
 
 cat >"$fixture/bin/docker" <<'EOF'
@@ -85,13 +85,13 @@ grep -Fxq -- "$header" "$fixture/stdout" || fail "missing header: $header"
 [[ ! -s "$MOCK_DOCKER_ROOT/calls" && ! -e "$XDG_STATE_HOME" ]] || fail 'empty listing accessed Docker or created state'
 echo 'PASS: empty listing runs anywhere without launch setup or state writes'
 
-mkdir -p "$root/project-a1b2c3d4/shared/project" "$root/other-12345678/shared/other"
-mkdir -p "$root/project-a1b2c3d4/.hidden/project"
+mkdir -p "$root/project-a1b2c3d4/shared/repos/project" "$root/other-12345678/shared/repos/other"
+mkdir -p "$root/project-a1b2c3d4/.hidden/repos/project" "$root/project-a1b2c3d4/shared/tmp"
 mkdir -p "$fixture/outside/injected" "$root/project-a1b2c3d4/bad name"
 ln -s "$fixture/outside" "$root/linked-12345678"
 ln -s "$fixture/outside" "$root/project-a1b2c3d4/linked"
 # Deeper worktree directories must not become separate sessions.
-mkdir -p "$root/project-a1b2c3d4/shared/worktree/nested"
+mkdir -p "$root/project-a1b2c3d4/shared/repos/worktree/nested"
 run_list
 assert_success
 assert_row shared idle "$created" "$root/project-a1b2c3d4/shared" — —
@@ -160,11 +160,11 @@ assert_row .hidden unknown "$not_created" "$root/project-a1b2c3d4/.hidden" — �
 echo 'PASS: unavailable Docker still lists directories with unknown status'
 
 # Unset XDG_STATE_HOME to exercise the default state location.
-mkdir -p "$HOME/.local/state/dockersand/repos/default-12345678/example"
+mkdir -p "$HOME/.local/state/dockersand/sessions/default-12345678/example"
 unset XDG_STATE_HOME
 run_list
 [[ "$list_exit" == 1 ]] || fail 'expected unavailable Docker'
-assert_row example unknown "$created" "$HOME/.local/state/dockersand/repos/default-12345678/example" — —
+assert_row example unknown "$created" "$HOME/.local/state/dockersand/sessions/default-12345678/example" — —
 echo 'PASS: default state location'
 
 for arguments in 'sessions' 'sessions unknown' 'sessions list extra' '--sessions list'; do
