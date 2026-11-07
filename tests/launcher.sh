@@ -11,7 +11,7 @@ export XDG_STATE_HOME="$fixture/state" DOCKERSAND_ARGS_FILE="$fixture/args"
 export FAKE_GCLOUD_TOKEN_FILE="$fixture/gcloud-token"
 unset GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL
 unset GIT_AUTHOR_DATE GIT_COMMITTER_DATE EMAIL GIT_CONFIG_COUNT
-unset DOCKERSAND_DIND DOCKERSAND_EGRESS DOCKERSAND_SESSION DOCKERSAND_SSH
+unset DOCKERSAND_DIND DOCKERSAND_EGRESS DOCKERSAND_SESSION DOCKERSAND_SSH DOCKERSAND_EPHEMERAL_TMP
 unset DOCKERSAND_GCLOUD DOCKERSAND_GH GH_TOKEN XDG_RUNTIME_DIR
 unset DOCKERSAND_DBUS DOCKERSAND_ENTRYPOINT DOCKERSAND_HOST_GATEWAY DOCKERSAND_GIT_STRATEGY
 unset DOCKERSAND_PUBLISH
@@ -130,8 +130,35 @@ run_sandbox DOCKERSAND_GIT_STRATEGY=clone DOCKERSAND_SESSION=identity
 assert_identity 'Local Name' local@example.test
 assert_arg io.dockersand.session=identity
 checkout_name="$(basename "$repo")-$(printf %s "$(realpath "$repo")" | sha256sum | cut -c1-8)"
-assert_arg "io.dockersand.directory=$XDG_STATE_HOME/dockersand/repos/$checkout_name/identity"
+session_dir="$XDG_STATE_HOME/dockersand/sessions/$checkout_name/identity"
+assert_arg "io.dockersand.directory=$session_dir"
 echo 'PASS: clone strategy uses the host checkout identity'
+
+assert_arg "type=bind,\"src=$session_dir/repos\",\"dst=/home/work/repos\""
+assert_arg "type=bind,\"src=$session_dir/tmp\",\"dst=/tmp\""
+[[ -d "$session_dir/repos/$(basename "$repo")/.git" ]] || fail 'clone is not under the session repos directory'
+[[ "$(stat -c %a "$session_dir")" == 700 ]] || fail 'session directory is not private'
+[[ "$(stat -c %a "$session_dir/tmp")" == 1777 ]] || fail 'session tmp is not 1777'
+echo 'PASS: clone sessions keep repos and /tmp under one private session directory'
+
+cp "$DOCKERSAND_ARGS_FILE" "$fixture/persistent-tmp-args"
+touch "$session_dir/tmp/scratch"
+run_sandbox DOCKERSAND_GIT_STRATEGY=clone DOCKERSAND_SESSION=identity DOCKERSAND_EPHEMERAL_TMP=1
+assert_no_arg "type=bind,\"src=$session_dir/tmp\",\"dst=/tmp\""
+assert_arg "type=bind,\"src=$session_dir/repos\",\"dst=/home/work/repos\""
+cp "$DOCKERSAND_ARGS_FILE" "$fixture/ephemeral-tmp-args"
+(cd "$repo" && DOCKERSAND_EPHEMERAL_TMP=0 "$launcher" run --session identity --ephemeral-tmp test env) \
+  2>"$fixture/stderr" || { cat "$fixture/stderr" >&2; fail '--ephemeral-tmp launch failed'; }
+cmp -s "$fixture/ephemeral-tmp-args" "$DOCKERSAND_ARGS_FILE" || fail '--ephemeral-tmp differs from DOCKERSAND_EPHEMERAL_TMP=1'
+[[ -e "$session_dir/tmp/scratch" ]] || fail 'an ephemeral run removed the saved /tmp'
+run_sandbox
+for arg in "${args[@]}"; do
+  [[ "$arg" != *'"dst=/tmp"'* ]] || fail 'mount strategy mounted a persistent /tmp'
+done
+# Last, as the resume test below compares against this launch
+run_sandbox DOCKERSAND_GIT_STRATEGY=clone DOCKERSAND_SESSION=identity DOCKERSAND_EPHEMERAL_TMP=0
+cmp -s "$fixture/persistent-tmp-args" "$DOCKERSAND_ARGS_FILE" || fail 'resuming changed the session /tmp mount'
+echo 'PASS: --ephemeral-tmp opts out of the session /tmp, which mount mode never has'
 
 cp "$DOCKERSAND_ARGS_FILE" "$fixture/session-args"
 (cd "$repo" && DOCKERSAND_GIT_STRATEGY=mount DOCKERSAND_SESSION=ignored \
@@ -372,7 +399,7 @@ for setting in '' 0 1; do
 done
 echo 'PASS: --dind matches the environment opt-in and overrides DOCKERSAND_DIND=0'
 
-app_args=(--dind --dbus --gcloud --gh --ssh --egress --session 'two words' --git-strategy mount --entrypoint /bin/bash --host-gateway '' -p 80)
+app_args=(--dind --dbus --gcloud --gh --ssh --egress --ephemeral-tmp --session 'two words' --git-strategy mount --entrypoint /bin/bash --host-gateway '' -p 80)
 (cd "$repo" && DOCKERSAND_GIT_STRATEGY=mount "$launcher" run test "${app_args[@]}") \
   2>"$fixture/stderr" || { cat "$fixture/stderr" >&2; fail 'app argument launch failed'; }
 mapfile -d '' -t args <"$DOCKERSAND_ARGS_FILE"
@@ -519,7 +546,8 @@ echo 'PASS: mount strategy quotes a project directory with : , and "'
 run_sandbox DOCKERSAND_GIT_STRATEGY=clone DOCKERSAND_SESSION=weird
 assert_no_v
 checkout_name="$weird-$(printf %s "$real" | sha256sum | cut -c1-8)"
-assert_arg "type=bind,\"src=${XDG_STATE_HOME//\"/\"\"}/dockersand/repos/${checkout_name//\"/\"\"}/weird\",\"dst=/home/work/repos\""
+assert_arg "type=bind,\"src=${XDG_STATE_HOME//\"/\"\"}/dockersand/sessions/${checkout_name//\"/\"\"}/weird/repos\",\"dst=/home/work/repos\""
+assert_arg "type=bind,\"src=${XDG_STATE_HOME//\"/\"\"}/dockersand/sessions/${checkout_name//\"/\"\"}/weird/tmp\",\"dst=/tmp\""
 echo 'PASS: clone strategy quotes a state directory with : , and "'
 
 mkdir -p "$fixture/home/.ssh"

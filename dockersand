@@ -28,7 +28,7 @@ sessions_list() {
   local root dir checkout session container_name names details prefix status container command created
   local result=0 docker_available=1
   local -a directories=()
-  root="$(realpath -m "$state/repos")"
+  root="$(realpath -m "$state/sessions")"
   shopt -s nullglob dotglob
   for dir in "$root"/*/*; do
     # Do not follow sandbox-controlled links or inspect Git inside a session.
@@ -48,8 +48,8 @@ sessions_list() {
     session="${dir##*/}"
     checkout="${dir%/*}"
     container_name="$(session_container_name "${checkout##*/}" "$session")"
-    # Birth time of the mount root, made on the session's first run. Unlike
-    # its mtime, the sandbox can't change it. 0 if the filesystem lacks it.
+    # Birth time of the session directory, made on the session's first run.
+    # The sandbox can't change it. 0 if the filesystem lacks it.
     created="$(stat -c %W -- "$dir" 2>/dev/null)" || created=0
     if [[ "$created" =~ ^[1-9][0-9]*$ ]]; then
       printf -v created '%(%Y-%m-%d %H:%M)T' "$created"
@@ -180,9 +180,10 @@ git_strategy() {
   esac
 }
 
-# Makes or reuses the session's clone, and mounts it in place of the checkout
+# Makes or reuses the session's clone, and mounts it in place of the checkout,
+# and the session's /tmp unless DOCKERSAND_EPHEMERAL_TMP=1
 prepare_clone() {
-  local session checkout_name container_name repos clone branch remote urls url
+  local session checkout_name container_name session_dir repos clone branch remote urls url
   local -a fetch_urls push_urls
   if (( ! in_repo )); then
     echo "DOCKERSAND_GIT_STRATEGY=clone needs a git repository" >&2
@@ -204,10 +205,19 @@ prepare_clone() {
     exit 1
   fi
   echo "session $session, resume with: dockersand run --session $session $app" >&2
-  # The whole of ~/repos is mounted, with the clone in it, so that worktrees
-  # the sandbox creates next to the clone (../<name>) persist too
-  repos="$state/repos/$checkout_name/$session"
+  # Everything the session keeps is under session_dir, so deleting it drops the
+  # session. The whole of ~/repos is mounted, with the clone in it, so that
+  # worktrees the sandbox creates next to the clone (../<name>) persist too.
+  session_dir="$state/sessions/$checkout_name/$session"
+  repos="$session_dir/repos"
   clone="$repos/$repo_dir"
+  mkdir -p "$session_dir/tmp"
+  # 700 keeps other host users out of what the sandbox wrote, including the
+  # world-writable tmp. That is 1777 like any /tmp, so whatever user the image
+  # runs as can use it. The sandbox can't swap either for a link: neither's
+  # parent is mounted.
+  chmod 700 "$session_dir"
+  chmod 1777 "$session_dir/tmp"
   if [[ ! -d "$clone" ]]; then
     mkdir -p "$repos"
     # Outside $repos, so an interrupted clone doesn't show up in the sandbox.
@@ -254,12 +264,16 @@ prepare_clone() {
   mount_src="$repos"
   mount_dst="/home/work/repos"
   echo "fetch from it with: git fetch $clone <branch>" >&2
-  echo "never run git under $repos on the host: hooks and config there are sandbox-controlled" >&2
+  echo "never run git under $session_dir on the host: hooks and config there are sandbox-controlled" >&2
   sandbox_args+=(
     --name "$container_name"
     --label "io.dockersand.session=$session"
-    --label "io.dockersand.directory=$(realpath "$repos")"
+    --label "io.dockersand.directory=$(realpath "$session_dir")"
   )
+  # Persistent, so that agents' scratch files in /tmp survive resumption
+  if [[ "${DOCKERSAND_EPHEMERAL_TMP:-}" != 1 ]]; then
+    sandbox_args+=(--mount "$(bind_mount "$session_dir/tmp" /tmp)")
+  fi
 }
 
 # dockersand-args-<app> prints one docker arg per line
@@ -515,6 +529,7 @@ usage() {
     '' 'run options:' \
     '  --session <name>       Create or resume a clone session (DOCKERSAND_SESSION)' \
     '  --git-strategy <mode>  Select clone or mount (DOCKERSAND_GIT_STRATEGY)' \
+    "  --ephemeral-tmp        Don't keep a clone session's /tmp (DOCKERSAND_EPHEMERAL_TMP=1)" \
     '  --entrypoint <path>    Override the image entrypoint (DOCKERSAND_ENTRYPOINT)' \
     '  --host-gateway <name>  Name the host; empty disables (DOCKERSAND_HOST_GATEWAY)' \
     '  -p, --publish <spec>   Publish a port, on 127.0.0.1 by default (DOCKERSAND_PUBLISH)' \
@@ -538,6 +553,7 @@ run_app() {
       --gh) export DOCKERSAND_GH=1; shift ;;
       --ssh) export DOCKERSAND_SSH=1; shift ;;
       --egress) export DOCKERSAND_EGRESS=1; shift ;;
+      --ephemeral-tmp) export DOCKERSAND_EPHEMERAL_TMP=1; shift ;;
       --session)
         if [[ -z "${2:-}" || "$2" == --* ]]; then
           echo '--session requires a name' >&2

@@ -44,7 +44,7 @@ git -C "$repo" remote set-url --add --push mirrors "$fixture/push two"
 (cd "$repo" && DOCKERSAND_GIT_STRATEGY=clone DOCKERSAND_SESSION=remotes "$launcher" run test) \
   2>"$fixture/stderr" || { cat "$fixture/stderr" >&2; exit 1; }
 checkout="repo-$(printf %s "$(realpath "$repo")" | sha256sum | cut -c1-8)"
-clone="$XDG_STATE_HOME/dockersand/repos/$checkout/remotes/repo"
+clone="$XDG_STATE_HOME/dockersand/sessions/$checkout/remotes/repos/repo"
 # This clone is a test fixture, not an agent-controlled saved session.
 clone_git() { GIT_CONFIG_GLOBAL=/dev/null git -C "$clone" "$@"; }
 fail() { echo "FAIL: $*" >&2; exit 1; }
