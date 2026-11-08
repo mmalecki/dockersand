@@ -252,7 +252,7 @@ fi
 if (cd "$repo" && DOCKERSAND_GIT_STRATEGY=clone DOCKERSAND_SESSION=badport "$launcher" run -p bad test) 2>"$fixture/stderr"; then
   fail 'accepted an invalid port in clone mode'
 fi
-[[ ! -e "$XDG_STATE_HOME/dockersand/repos/$(basename "$repo")-$(printf %s "$(realpath "$repo")" | sha256sum | cut -c1-8)/badport" ]] ||
+[[ ! -e "$XDG_STATE_HOME/dockersand/sessions/$checkout_name/badport" ]] ||
   fail 'invalid port left a session behind'
 if (cd "$repo" && DOCKERSAND_GIT_STRATEGY=mount FAKE_EGRESS_PROXY=1 "$launcher" run --egress -p 80 test) 2>"$fixture/stderr"; then
   fail 'accepted -p with --egress'
