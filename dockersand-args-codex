@@ -4,7 +4,7 @@ set -e
 # --mount is parsed as CSV: quote each field, doubling any '"'
 bind() { printf 'type=bind,"src=%s","dst=%s"' "${1//\"/\"\"}" "${2//\"/\"\"}"; }
 
-# --mount needs this to exist; -v used to create it root-owned
+# --mount needs the source to exist
 mkdir -p "$HOME/.codex" "$HOME/.agents"
 
 printf '%s\n' \

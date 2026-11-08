@@ -610,8 +610,9 @@ run_app() {
   # Before prepare_clone, so an invalid port doesn't leave a session behind
   publish_args
 
+  work_dir="/home/work/repos/$repo_dir"
   mount_src="$rp_repo"
-  mount_dst="/home/work/repos/$repo_dir"
+  mount_dst="$work_dir"
   # Assigned first: set -e ignores a failed substitution in a case word
   strategy="$(git_strategy)"
   case "$strategy" in
@@ -625,14 +626,12 @@ run_app() {
   esac
 
   echo "launching sandbox image $img..." >&2
-  work_dir="/home/work/repos/$repo_dir"
 
   isolation_args
   run_hook
   if [[ "${DOCKERSAND_SSH:-}" == 1 ]]; then forward_ssh; fi
   if [[ "${DOCKERSAND_GCLOUD:-}" == 1 ]]; then forward_gcloud; fi
   if [[ "${DOCKERSAND_GH:-}" == 1 ]]; then forward_gh; fi
-  # Forward the session bus only when requested
   if [[ "${DOCKERSAND_DBUS:-}" == 1 ]]; then forward_dbus; fi
   forward_git_identity
   network_args
