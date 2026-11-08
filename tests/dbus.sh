@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-launcher="$(cd "$(dirname "$0")/.." && pwd)/dockersand"
-fixture="$(mktemp -d /tmp/dockersand-dbus.XXXXXX)"
+# shellcheck source=tests/lib.sh
+source "$(dirname "$0")/lib.sh"
+
 daemon_pids=()
 cleanup() {
   for pid in "${daemon_pids[@]}"; do
@@ -11,16 +12,8 @@ cleanup() {
   done
   rm -rf "$fixture"
 }
-trap cleanup EXIT
-mkdir -p "$fixture/bin" "$fixture/project" "$fixture/runtime"
-export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
-export XDG_STATE_HOME="$fixture/state" DOCKERSAND_ARGS_FILE="$fixture/args"
-unset DOCKERSAND_DBUS DOCKERSAND_SSH DOCKERSAND_EGRESS DOCKERSAND_SESSION
-unset DOCKERSAND_DIND DOCKERSAND_GCLOUD DOCKERSAND_GH
+mkdir -p "$repo" "$fixture/runtime"
 unset DBUS_SESSION_BUS_ADDRESS DBUS_SYSTEM_BUS_ADDRESS XDG_RUNTIME_DIR
-unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR
-
-fail() { echo "FAIL: $*" >&2; exit 1; }
 
 start_bus() {
   local attempt pid
@@ -41,41 +34,13 @@ special_socket="$fixture/bus with,colon:and%quote\".sock"
 special_address="unix:path=$fixture/bus%20with%2ccolon%3aand%25quote%22.sock"
 start_bus "$special_address" "$special_socket"
 
-cat >"$fixture/bin/docker" <<'EOF'
-#!/usr/bin/env bash
-if [[ "$1" == run ]]; then
-  printf '%s\0' "$@" >"$DOCKERSAND_ARGS_FILE"
-  exit 0
-fi
-exit 1
-EOF
-chmod +x "$fixture/bin/docker"
-export PATH="$fixture/bin:$PATH"
-
-run_sandbox() {
-  (cd "$fixture/project" && DOCKERSAND_GIT_STRATEGY=mount env "$@" "$launcher" run test env) \
-    2>"$fixture/stderr" || { cat "$fixture/stderr" >&2; fail 'launcher failed'; }
-  mapfile -d '' -t args <"$DOCKERSAND_ARGS_FILE"
-}
+install_fake_docker
 
 expect_failure() {
-  : >"$DOCKERSAND_ARGS_FILE"
-  if (cd "$fixture/project" && DOCKERSAND_GIT_STRATEGY=mount env DOCKERSAND_DBUS=1 "$@" "$launcher" run test env) \
-    2>"$fixture/stderr"; then
-    fail 'invalid bus unexpectedly accepted'
-  fi
-  [[ ! -s "$DOCKERSAND_ARGS_FILE" ]] || fail 'docker run called for an invalid bus'
+  expect_rejected DOCKERSAND_DBUS=1 "$@" run test env
   local error
   error="$(<"$fixture/stderr")"
   [[ "$error" == *'session bus filesystem socket'* || "$error" == *'invalid filesystem path'* ]] || fail 'missing diagnostic'
-}
-
-assert_arg() {
-  local arg
-  for arg in "${args[@]}"; do
-    [[ "$arg" != "$1" ]] || return 0
-  done
-  fail "missing argument: $1"
 }
 
 assert_forwarded() {
@@ -83,20 +48,16 @@ assert_forwarded() {
   assert_arg DBUS_SESSION_BUS_ADDRESS=unix:path=/run/dockersand/dbus-session.sock
   assert_arg --runtime=runsc
   assert_arg no-new-privileges
-  local arg
-  for arg in "${args[@]}"; do
-    [[ "$arg" != DBUS_SYSTEM_BUS_ADDRESS=* ]] || fail 'system bus was forwarded'
-    [[ "$arg" != *"src=$fixture/runtime\""* ]] || fail 'runtime directory was forwarded'
-    [[ "$arg" != -v ]] || fail 'bind mount used -v'
-  done
+  assert_no_arg_matching 'DBUS_SYSTEM_BUS_ADDRESS=*'
+  assert_no_arg_matching "*src=$fixture/runtime\"*"
+  assert_no_arg -v
 }
 
 for value in '' 0; do
   run_sandbox "DOCKERSAND_DBUS=$value" "DBUS_SESSION_BUS_ADDRESS=unix:path=$socket" \
     DBUS_SYSTEM_BUS_ADDRESS=unix:path=/irrelevant/system-bus "XDG_RUNTIME_DIR=$fixture/runtime"
-  for arg in "${args[@]}"; do
-    [[ "$arg" != DBUS_*=* && "$arg" != *dbus-session.sock* ]] || fail 'D-Bus forwarded without opt-in'
-  done
+  assert_no_arg_matching 'DBUS_*=*'
+  assert_no_arg_matching '*dbus-session.sock*'
 done
 run_sandbox DBUS_SESSION_BUS_ADDRESS='not-an-address'
 echo 'PASS: forwarding is opt-in, including when an invalid host address is present'
@@ -148,17 +109,13 @@ assert_forwarded "$socket"
 assert_arg "type=bind,\"src=$fixture/ssh-agent.sock\",\"dst=/run/dockersand/ssh-agent.sock\""
 echo 'PASS: D-Bus and SSH forwarding work together'
 
-cp "$DOCKERSAND_ARGS_FILE" "$fixture/forwarding-args"
-(cd "$fixture/project" && DOCKERSAND_GIT_STRATEGY=mount DOCKERSAND_DBUS=0 DOCKERSAND_SSH=0 \
-  DBUS_SESSION_BUS_ADDRESS="unix:path=$socket" SSH_AUTH_SOCK="$fixture/ssh-agent.sock" \
-  "$launcher" run --ssh --dbus -- test env) 2>"$fixture/stderr" ||
-  { cat "$fixture/stderr" >&2; fail 'forwarding switches failed'; }
-cmp -s "$fixture/forwarding-args" "$DOCKERSAND_ARGS_FILE" || fail 'forwarding switches differ from environment opt-ins'
+cp "$FAKE_DOCKER_ARGS_FILE" "$fixture/forwarding-args"
+run_sandbox DOCKERSAND_DBUS=0 DOCKERSAND_SSH=0 "DBUS_SESSION_BUS_ADDRESS=unix:path=$socket" \
+  "SSH_AUTH_SOCK=$fixture/ssh-agent.sock" --ssh --dbus -- test env
+cmp -s "$fixture/forwarding-args" "$FAKE_DOCKER_ARGS_FILE" || fail 'forwarding switches differ from environment opt-ins'
 echo 'PASS: --ssh and --dbus combine and override environment opt-outs'
 
-git -C "$fixture/project" init -q
-git -C "$fixture/project" -c user.name=Fixture -c user.email=fixture@example.test \
-  commit -q --allow-empty -m initial
+make_repo "$repo"
 run_sandbox DOCKERSAND_DBUS=1 "DBUS_SESSION_BUS_ADDRESS=unix:path=$socket" \
   DOCKERSAND_GIT_STRATEGY=clone DOCKERSAND_SESSION=dbus
 assert_forwarded "$socket"

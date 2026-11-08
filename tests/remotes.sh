@@ -1,25 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-launcher="$(cd "$(dirname "$0")/.." && pwd)/dockersand"
-fixture="$(mktemp -d)"
-trap 'rm -rf "$fixture"' EXIT
-mkdir -p "$fixture/bin" "$fixture/repo" "$fixture/home"
-export HOME="$fixture/home" XDG_STATE_HOME="$fixture/state"
-export GIT_CONFIG_GLOBAL="$fixture/gitconfig" GIT_CONFIG_NOSYSTEM=1
-unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_CONFIG_COUNT
-unset DOCKERSAND_DIND DOCKERSAND_EGRESS DOCKERSAND_SSH DOCKERSAND_DBUS
-unset DOCKERSAND_GCLOUD DOCKERSAND_GH DOCKERSAND_ENTRYPOINT
-cat >"$fixture/bin/docker" <<'EOF'
-#!/usr/bin/env bash
-[[ "$1" == run ]]
-EOF
-chmod +x "$fixture/bin/docker"
-export PATH="$fixture/bin:$PATH"
-repo="$fixture/repo"
-git -C "$repo" init -q
-git -C "$repo" -c user.name=Fixture -c user.email=fixture@example.test \
-  commit -q --allow-empty -m initial
+# shellcheck source=tests/lib.sh
+source "$(dirname "$0")/lib.sh"
+
+export HOME="$fixture/home"
+mkdir -p "$HOME"
+install_fake_docker
+make_repo "$repo"
 
 # Separate fetch and push protocols/destinations.
 git -C "$repo" remote add origin https://upstream.example.test/project.git
@@ -41,13 +29,11 @@ git -C "$repo" remote set-url --add mirrors https://fetch.example.test/second.gi
 git -C "$repo" remote set-url --add --push mirrors "$fixture/push one"
 git -C "$repo" remote set-url --add --push mirrors "$fixture/push two"
 
-(cd "$repo" && DOCKERSAND_GIT_STRATEGY=clone DOCKERSAND_SESSION=remotes "$launcher" run test) \
-  2>"$fixture/stderr" || { cat "$fixture/stderr" >&2; exit 1; }
+run_sandbox DOCKERSAND_GIT_STRATEGY=clone DOCKERSAND_SESSION=remotes test
 checkout="repo-$(printf %s "$(realpath "$repo")" | sha256sum | cut -c1-8)"
 clone="$XDG_STATE_HOME/dockersand/sessions/$checkout/remotes/repos/repo"
 # This clone is a test fixture, not an agent-controlled saved session.
 clone_git() { GIT_CONFIG_GLOBAL=/dev/null git -C "$clone" "$@"; }
-fail() { echo "FAIL: $*" >&2; exit 1; }
 
 for remote in origin fallback alias rewritten mirrors; do
   [[ "$(git -C "$repo" remote get-url --all "$remote")" == \

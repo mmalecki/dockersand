@@ -1,13 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-launcher="$(cd "$(dirname "$0")/.." && pwd)/dockersand"
-fixture="$(mktemp -d)"
-trap 'rm -rf "$fixture"' EXIT
+# shellcheck source=tests/lib.sh
+source "$(dirname "$0")/lib.sh"
+
 export HOME="$fixture/home" XDG_STATE_HOME="$fixture/state with spaces"
 export MOCK_DOCKER_ROOT="$fixture/docker" TZ=UTC
-unset DOCKERSAND_GIT_STRATEGY DOCKERSAND_SESSION
-mkdir -p "$HOME" "$fixture/bin" "$MOCK_DOCKER_ROOT"
+mkdir -p "$HOME" "$MOCK_DOCKER_ROOT"
 root="$XDG_STATE_HOME/dockersand/sessions"
 touch "$MOCK_DOCKER_ROOT/names" "$MOCK_DOCKER_ROOT/calls"
 
@@ -57,9 +56,7 @@ exit 1
 EOF
 done
 chmod +x "$fixture/bin/"*
-export PATH="$fixture/bin:$PATH"
 
-fail() { echo "FAIL: $*" >&2; exit 1; }
 # Expected CREATED cells, written out to check the 16-character width
 created='2026-09-30 01:23'
 not_created='—               '
