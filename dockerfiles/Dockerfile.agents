@@ -1,7 +1,7 @@
 FROM debian:trixie
 
-RUN apt update -y && apt upgrade -y
-RUN apt install -y --no-install-recommends \
+RUN apt update -y && apt upgrade -y \
+ && apt install -y --no-install-recommends \
     ca-certificates git curl wget unzip zip xz-utils dnsutils \
     ripgrep fd-find jq less file tree procps shellcheck \
     build-essential python3 python3-pip python3-venv \
@@ -11,34 +11,28 @@ RUN apt install -y --no-install-recommends \
  && ln -s /usr/bin/fdfind /usr/local/bin/fd \
  && rm -rf /var/lib/apt/lists/*
 
-RUN curl -fsSL https://download.docker.com/linux/debian/gpg \
+# Docker, the GitHub CLI and the Google Cloud CLI, from their own repositories
+RUN arch="$(dpkg --print-architecture)" \
+ && curl -fsSL https://download.docker.com/linux/debian/gpg \
     -o /etc/apt/keyrings/docker.asc \
+ && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+    -o /etc/apt/keyrings/githubcli-archive-keyring.gpg \
+ && curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg \
+    -o /etc/apt/keyrings/cloud.google.asc \
  && chmod go+r /etc/apt/keyrings/docker.asc \
- && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian trixie stable" \
+    /etc/apt/keyrings/githubcli-archive-keyring.gpg \
+    /etc/apt/keyrings/cloud.google.asc \
+ && echo "deb [arch=$arch signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian trixie stable" \
     > /etc/apt/sources.list.d/docker.list \
+ && echo "deb [arch=$arch signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+    > /etc/apt/sources.list.d/github-cli.list \
+ && echo "deb [signed-by=/etc/apt/keyrings/cloud.google.asc] https://packages.cloud.google.com/apt cloud-sdk main" \
+    > /etc/apt/sources.list.d/google-cloud-sdk.list \
  && apt update -y \
  && apt install -y --no-install-recommends \
     docker-ce docker-ce-cli containerd.io docker-ce-rootless-extras \
     docker-buildx-plugin docker-compose-plugin \
- && rm -rf /var/lib/apt/lists/*
-
-RUN mkdir -p -m 755 /etc/apt/keyrings \
- && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
-    -o /etc/apt/keyrings/githubcli-archive-keyring.gpg \
- && chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg \
- && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
-    > /etc/apt/sources.list.d/github-cli.list \
- && apt update -y \
- && apt install -y --no-install-recommends gh \
- && rm -rf /var/lib/apt/lists/*
-
-RUN curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg \
-    -o /etc/apt/keyrings/cloud.google.asc \
- && chmod go+r /etc/apt/keyrings/cloud.google.asc \
- && echo "deb [signed-by=/etc/apt/keyrings/cloud.google.asc] https://packages.cloud.google.com/apt cloud-sdk main" \
-    > /etc/apt/sources.list.d/google-cloud-sdk.list \
- && apt update -y \
- && apt install -y --no-install-recommends google-cloud-cli \
+    gh google-cloud-cli \
  && rm -rf /var/lib/apt/lists/*
 # Developer privacy: never send gcloud usage statistics
 ENV CLOUDSDK_CORE_DISABLE_USAGE_REPORTING=true
@@ -63,8 +57,7 @@ RUN if [ "$UV_VERSION" = latest ]; then uv_path=uv; else uv_path="uv/$UV_VERSION
   | env UV_INSTALL_DIR=/usr/local/bin UV_NO_MODIFY_PATH=1 sh
 
 ARG WORK_UID=1000
-RUN groupadd work
-RUN useradd --uid "$WORK_UID" -m work -g work
+RUN groupadd work && useradd --uid "$WORK_UID" -m work -g work
 # useradd allocates subordinate IDs for rootless containers by default.
 RUN test -s /etc/subuid && test -s /etc/subgid \
  && install -d -m 700 -o work -g work /home/work/.docker /home/work/.docker/run
@@ -86,9 +79,8 @@ ENV PATH="$FNM_DIR:$FNM_DIR/aliases/default/bin:/home/work/.npm/bin:/home/work/.
 # Developer privacy: keep Go and gopls telemetry fully off, not just local-only
 RUN go telemetry off
 
-RUN npm config set prefix "/home/work/.npm"
-
-RUN npm -g install chrome-devtools-mcp
+RUN npm config set prefix "/home/work/.npm" \
+ && npm -g install chrome-devtools-mcp
 
 COPY --chmod=755 dockerfiles/docker-rootless.sh /usr/local/bin/docker
 ENV XDG_RUNTIME_DIR=/home/work/.docker/run
