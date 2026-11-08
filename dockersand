@@ -11,6 +11,16 @@ state="${XDG_STATE_HOME:-$HOME/.local/state}/dockersand"
 # mount_src and mount_dst of the project mount.
 sandbox_args=()
 
+die() {
+  echo "$*" >&2
+  exit 1
+}
+
+# Whether the opt-in environment variable $1 is set to 1
+opted_in() {
+  [[ "${!1:-}" == 1 ]]
+}
+
 session_container_name() {
   printf 'dockersand-%s-%s' "$(printf %s "$1" | tr -c 'A-Za-z0-9_.-' _)" "$2"
 }
@@ -130,14 +140,12 @@ resolve_repo() {
     gd_pwd="$(git rev-parse --absolute-git-dir 2>/dev/null)" || gd_pwd=""
     gd_repo="$(git -C "$repo" rev-parse --absolute-git-dir 2>/dev/null)" || gd_repo=""
     if [[ -z "$gd_pwd" || -z "$gd_repo" || "$gd_pwd" != "$gd_repo" ]]; then
-      echo "refusing to mount $repo (toplevel doesn't belong to this git repo)" >&2
-      exit 1
+      die "refusing to mount $repo (toplevel doesn't belong to this git repo)"
     fi
     # PWD must be under the resolved toplevel
     rp_repo="$(realpath "$repo")"
     if [[ "$rp_pwd" != "$rp_repo" && "$rp_pwd" != "$rp_repo"/* ]]; then
-      echo "refusing to mount $repo (PWD not under toplevel)" >&2
-      exit 1
+      die "refusing to mount $repo (PWD not under toplevel)"
     fi
   else
     repo="$rp_pwd"
@@ -148,61 +156,78 @@ resolve_repo() {
   # Mounting all of $HOME (or /) read-write would defeat the sandbox
   rp_home="$(realpath "$HOME")"
   if [[ "$rp_repo" == "$rp_home" || "$rp_repo" == / ]]; then
-    echo "refusing to mount $repo into the sandbox; run from a project directory" >&2
-    exit 1
+    die "refusing to mount $repo into the sandbox; run from a project directory"
   fi
   # Refuse when $HOME is under $repo (e.g. running from /home would mount
   # every user's home directory).
   if [[ "$rp_home" == "$rp_repo"/* ]]; then
-    echo "refusing to mount $repo into the sandbox; \$HOME is under the repo root" >&2
-    exit 1
+    die "refusing to mount $repo into the sandbox; \$HOME is under the repo root"
   fi
 }
 
-# DOCKERSAND_GIT_STRATEGY selects what the sandbox works in:
-#   clone (default): a wholly separate clone per session (DOCKERSAND_SESSION)
-#   mount: the checkout itself, including its .git
-git_strategy() {
-  local strategy="${DOCKERSAND_GIT_STRATEGY:-}"
-  if [[ -z "$strategy" ]]; then
-    if (( in_repo )); then
-      strategy=clone
-    else
-      strategy=mount  # no .git to protect
-    fi
+# Clones the checkout to $1, moving it into place only once it's complete
+make_clone() {
+  local clone="$1" branch remote urls url
+  local -a fetch_urls push_urls
+  # Outside the session's repos, so an interrupted clone doesn't show up in the
+  # sandbox. Global, as the EXIT trap doesn't see locals when set -e exits.
+  clone_tmp="$(mktemp -d "$state/clone.tmp.XXXXXX")"
+  trap 'rm -rf "$clone_tmp"' EXIT
+  # From the common dir, so this works from linked worktrees too. No
+  # hardlinks: the sandbox could otherwise rewrite objects shared with the
+  # host repo.
+  git clone -q --no-hardlinks --no-checkout \
+    "$(git rev-parse --path-format=absolute --git-common-dir)" "$clone_tmp"
+  if branch="$(git symbolic-ref -q --short HEAD)"; then
+    git -C "$clone_tmp" checkout -q -B "$branch" "$(git rev-parse HEAD)"
+  else
+    git -C "$clone_tmp" checkout -q --detach "$(git rev-parse HEAD)"
   fi
-  case "$strategy" in
-    mount | clone) echo "$strategy" ;;
-    *)
-      echo "unknown DOCKERSAND_GIT_STRATEGY: $strategy (expected mount or clone)" >&2
-      return 1
-      ;;
-  esac
+  # Swap the host-path origin, unreachable from the sandbox, for the
+  # checkout's own remotes. Resolve host URL rewrites now: the sandbox does
+  # not receive the host gitconfig, and push URLs can differ from fetch URLs.
+  git -C "$clone_tmp" remote remove origin
+  while read -r remote; do
+    urls="$(git remote get-url --all "$remote")"
+    mapfile -t fetch_urls <<<"$urls"
+    urls="$(git remote get-url --push --all "$remote")"
+    mapfile -t push_urls <<<"$urls"
+    git -C "$clone_tmp" remote add "$remote" "${fetch_urls[0]}"
+    for url in "${fetch_urls[@]:1}"; do
+      git -C "$clone_tmp" config --local --add "remote.$remote.url" "$url"
+    done
+    for url in "${push_urls[@]}"; do
+      git -C "$clone_tmp" config --local --add "remote.$remote.pushurl" "$url"
+    done
+  done < <(git remote)
+  # -T: if a concurrent first run created $clone meanwhile, fail rather
+  # than nest ours inside it, and use theirs
+  if ! mv -T "$clone_tmp" "$clone" 2>/dev/null; then
+    [[ -d "$clone" ]] || die "failed to move the clone into $clone"
+    rm -rf "$clone_tmp"
+  fi
+  trap - EXIT
 }
 
 # Makes or reuses the session's clone, and mounts it in place of the checkout,
 # and the session's /tmp unless DOCKERSAND_EPHEMERAL_TMP=1
 prepare_clone() {
-  local session checkout_name container_name session_dir repos clone branch remote urls url
-  local -a fetch_urls push_urls
+  local session checkout_name container_name session_dir repos clone
   if (( ! in_repo )); then
-    echo "DOCKERSAND_GIT_STRATEGY=clone needs a git repository" >&2
-    exit 1
+    die "DOCKERSAND_GIT_STRATEGY=clone needs a git repository"
   fi
   # DOCKERSAND_SESSION picks the clone, so that runs are isolated from
   # each other unless they resume a session by name
   session="${DOCKERSAND_SESSION:-$(od -An -N4 -tx4 /dev/urandom | tr -d ' ')}"
   if [[ ! "$session" =~ ^[A-Za-z0-9._-]+$ || "$session" == . || "$session" == .. ]]; then
-    echo "invalid DOCKERSAND_SESSION: $session (expected [A-Za-z0-9._-]+)" >&2
-    exit 1
+    die "invalid DOCKERSAND_SESSION: $session (expected [A-Za-z0-9._-]+)"
   fi
   checkout_name="$repo_dir-$(printf %s "$rp_repo" | sha256sum | cut -c1-8)"
   # Docker refuses a second container with the same name, so a session runs
   # in at most one sandbox at a time
   container_name="$(session_container_name "$checkout_name" "$session")"
   if docker container inspect "$container_name" >/dev/null 2>&1; then
-    echo "session $session is already running (container $container_name)" >&2
-    exit 1
+    die "session $session is already running (container $container_name)"
   fi
   echo "session $session, resume with: dockersand run --session $session $app" >&2
   # Everything the session keeps is under session_dir, so deleting it drops the
@@ -220,44 +245,7 @@ prepare_clone() {
   chmod 1777 "$session_dir/tmp"
   if [[ ! -d "$clone" ]]; then
     mkdir -p "$repos"
-    # Outside $repos, so an interrupted clone doesn't show up in the sandbox.
-    # Global, as the EXIT trap doesn't see locals when set -e exits.
-    clone_tmp="$(mktemp -d "$state/clone.tmp.XXXXXX")"
-    trap 'rm -rf "$clone_tmp"' EXIT
-    # From the common dir, so this works from linked worktrees too. No
-    # hardlinks: the sandbox could otherwise rewrite objects shared with the
-    # host repo.
-    git clone -q --no-hardlinks --no-checkout \
-      "$(git rev-parse --path-format=absolute --git-common-dir)" "$clone_tmp"
-    if branch="$(git symbolic-ref -q --short HEAD)"; then
-      git -C "$clone_tmp" checkout -q -B "$branch" "$(git rev-parse HEAD)"
-    else
-      git -C "$clone_tmp" checkout -q --detach "$(git rev-parse HEAD)"
-    fi
-    # Swap the host-path origin, unreachable from the sandbox, for the
-    # checkout's own remotes. Resolve host URL rewrites now: the sandbox does
-    # not receive the host gitconfig, and push URLs can differ from fetch URLs.
-    git -C "$clone_tmp" remote remove origin
-    while read -r remote; do
-      urls="$(git remote get-url --all "$remote")"
-      mapfile -t fetch_urls <<<"$urls"
-      urls="$(git remote get-url --push --all "$remote")"
-      mapfile -t push_urls <<<"$urls"
-      git -C "$clone_tmp" remote add "$remote" "${fetch_urls[0]}"
-      for url in "${fetch_urls[@]:1}"; do
-        git -C "$clone_tmp" config --local --add "remote.$remote.url" "$url"
-      done
-      for url in "${push_urls[@]}"; do
-        git -C "$clone_tmp" config --local --add "remote.$remote.pushurl" "$url"
-      done
-    done < <(git remote)
-    # -T: if a concurrent first run created $clone meanwhile, fail rather
-    # than nest ours inside it, and use theirs
-    if ! mv -T "$clone_tmp" "$clone" 2>/dev/null; then
-      [[ -d "$clone" ]] || { echo "failed to move the clone into $clone" >&2; exit 1; }
-      rm -rf "$clone_tmp"
-    fi
-    trap - EXIT
+    make_clone "$clone"
   fi
   # Untracked directories don't exist in the clone
   [[ -d "$clone/$subdir" ]] || subdir=""
@@ -271,7 +259,7 @@ prepare_clone() {
     --label "io.dockersand.directory=$(realpath "$session_dir")"
   )
   # Persistent, so that agents' scratch files in /tmp survive resumption
-  if [[ "${DOCKERSAND_EPHEMERAL_TMP:-}" != 1 ]]; then
+  if ! opted_in DOCKERSAND_EPHEMERAL_TMP; then
     sandbox_args+=(--mount "$(bind_mount "$session_dir/tmp" /tmp)")
   fi
 }
@@ -308,9 +296,9 @@ forward_ssh() {
 # Renamed into place, so the sandbox never reads a partial token. The whole
 # directory is mounted, as a file mount would keep the replaced inode.
 refresh_gcloud_token() {
-  gcloud auth print-access-token >"$token_dir/token.tmp" &&
-    chmod 644 "$token_dir/token.tmp" &&
-    mv -f "$token_dir/token.tmp" "$token_dir/token"
+  gcloud auth print-access-token >"$1/token.tmp" &&
+    chmod 644 "$1/token.tmp" &&
+    mv -f "$1/token.tmp" "$1/token"
 }
 
 # Prints the start time of process $1, failing once it has quit. A zombie has
@@ -329,10 +317,9 @@ proc_start() {
 # A short-lived access token from the host's gcloud, and its default project.
 # Not ~/.config/gcloud, which holds refresh tokens and the account name.
 forward_gcloud() {
-  local token_root project sandbox_pid sandbox_start
+  local token_root token_dir project sandbox_pid sandbox_start
   if ! command -v gcloud >/dev/null; then
-    echo "DOCKERSAND_GCLOUD=1 needs gcloud on the host" >&2
-    exit 1
+    die "DOCKERSAND_GCLOUD=1 needs gcloud on the host"
   fi
   token_root="$state"
   [[ -z "${XDG_RUNTIME_DIR:-}" ]] || token_root="$XDG_RUNTIME_DIR/dockersand"
@@ -340,13 +327,11 @@ forward_gcloud() {
   # Left behind only if the refresher below was killed; its token has expired
   find "$token_root" -mindepth 1 -maxdepth 1 -name 'gcloud.*' -mmin +60 -exec rm -rf {} +
   # Readable by the sandbox user whatever its uid; $token_root keeps out others.
-  # Global, for refresh_gcloud_token.
   token_dir="$(mktemp -d "$token_root/gcloud.XXXXXX")"
   chmod 755 "$token_dir"
-  if ! refresh_gcloud_token; then
+  if ! refresh_gcloud_token "$token_dir"; then
     rm -rf "$token_dir"
-    echo "gcloud auth print-access-token failed; run gcloud auth login" >&2
-    exit 1
+    die "gcloud auth print-access-token failed; run gcloud auth login"
   fi
   sandbox_args+=(
     --mount "$(bind_mount "$token_dir" /run/secrets/gcloud readonly)"
@@ -372,7 +357,7 @@ forward_gcloud() {
       # By mtime, so a refresh is due straight away after a suspend. A failed
       # refresh stops, rather than retrying with the host's credentials.
       if [[ -n "$(find "$token_dir/token" -mmin +2)" ]]; then
-        refresh_gcloud_token || exit
+        refresh_gcloud_token "$token_dir" || exit
       fi
       sleep 5
     done
@@ -383,12 +368,10 @@ forward_gcloud() {
 # gh's OAuth tokens don't expire, so it's read once, at launch.
 forward_gh() {
   if ! command -v gh >/dev/null; then
-    echo "DOCKERSAND_GH=1 needs gh on the host" >&2
-    exit 1
+    die "DOCKERSAND_GH=1 needs gh on the host"
   fi
   if ! GH_TOKEN="$(gh auth token)" || [[ -z "$GH_TOKEN" ]]; then
-    echo "gh auth token failed; run gh auth login on the host" >&2
-    exit 1
+    die "gh auth token failed; run gh auth login on the host"
   fi
   # Passed by name, so the token stays out of docker run's argv
   export GH_TOKEN
@@ -409,8 +392,7 @@ forward_dbus() {
         [[ "$option" == path=* ]] || continue
         encoded_path="${option#path=}"
         if [[ ! "$encoded_path" =~ ^([-0-9A-Za-z_/.\*]|%[0-9A-Fa-f]{2})+$ || "$encoded_path" == *%00* ]]; then
-          echo "invalid filesystem path in DBUS_SESSION_BUS_ADDRESS" >&2
-          exit 1
+          die "invalid filesystem path in DBUS_SESSION_BUS_ADDRESS"
         fi
         printf -v candidate '%b' "${encoded_path//%/\\x}"
         if [[ "$candidate" == /* && -S "$candidate" ]]; then
@@ -423,8 +405,7 @@ forward_dbus() {
     dbus_socket="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/bus"
   fi
   if [[ ! -S "$dbus_socket" ]]; then
-    echo "DOCKERSAND_DBUS=1 needs a session bus filesystem socket; set DBUS_SESSION_BUS_ADDRESS=unix:path=/path/to/bus" >&2
-    exit 1
+    die "DOCKERSAND_DBUS=1 needs a session bus filesystem socket; set DBUS_SESSION_BUS_ADDRESS=unix:path=/path/to/bus"
   fi
   # Only the socket is mounted, not the rest of the host's runtime directory
   sandbox_args+=(
@@ -449,7 +430,7 @@ forward_git_identity() {
 # Opt-in rootless Docker needs user namespaces, its setuid mapping helpers,
 # writable proc/sys mounts and a TUN device for userspace networking.
 isolation_args() {
-  if [[ "${DOCKERSAND_DIND:-}" == 1 ]]; then
+  if opted_in DOCKERSAND_DIND; then
     sandbox_args+=(
       --runtime=runc
       --cap-add SYS_ADMIN
@@ -468,16 +449,14 @@ isolation_args() {
 # proxy from docker-compose.yml
 network_args() {
   local proxy=dockersand-egress-proxy proxy_ip proxy_url host_gateway
-  if [[ "${DOCKERSAND_EGRESS:-}" == 1 ]]; then
+  if opted_in DOCKERSAND_EGRESS; then
     if [[ "$(docker inspect -f '{{.State.Running}}' "$proxy" 2>/dev/null)" != true ]]; then
-      echo "$proxy is not running; start it with docker compose up -d" >&2
-      exit 1
+      die "$proxy is not running; start it with docker compose up -d"
     fi
     # By IP: docker's embedded DNS doesn't resolve container names under runsc
     proxy_ip="$(docker inspect -f '{{(index .NetworkSettings.Networks "dockersand-internal").IPAddress}}' "$proxy" 2>/dev/null || true)"
     if [[ -z "$proxy_ip" ]]; then
-      echo "$proxy is not attached to dockersand-internal; recreate it with docker compose up -d --force-recreate" >&2
-      exit 1
+      die "$proxy is not attached to dockersand-internal; recreate it with docker compose up -d --force-recreate"
     fi
     proxy_url="http://$proxy_ip:3128"
     sandbox_args+=(
@@ -507,9 +486,8 @@ publish_args() {
   (( ${#specs[@]} )) || return 0
   # The internal network has no route to the host; Docker silently ignores
   # ports published on it
-  if [[ "${DOCKERSAND_EGRESS:-}" == 1 ]]; then
-    echo "DOCKERSAND_PUBLISH doesn't work with DOCKERSAND_EGRESS=1" >&2
-    exit 1
+  if opted_in DOCKERSAND_EGRESS; then
+    die "DOCKERSAND_PUBLISH doesn't work with DOCKERSAND_EGRESS=1"
   fi
   for spec in "${specs[@]}"; do
     if [[ "$spec" =~ ^$port$proto$ ]]; then
@@ -517,33 +495,43 @@ publish_args() {
     elif [[ "$spec" =~ ^$port:$port$proto$ ]]; then
       spec="127.0.0.1:$spec"
     elif [[ ! "$spec" =~ ^(\[[0-9A-Fa-f:.]+\]|[0-9.]+):($port)?:$port$proto$ ]]; then
-      echo "invalid port to publish: $spec" >&2
-      exit 1
+      die "invalid port to publish: $spec"
     fi
     sandbox_args+=(-p "$spec")
   done
 }
 
 usage() {
-  printf '%s\n' 'usage: dockersand run [options] [--] <app> [args...]' '       dockersand sessions list' \
-    '' 'run options:' \
-    '  --session <name>       Create or resume a clone session (DOCKERSAND_SESSION)' \
-    '  --git-strategy <mode>  Select clone or mount (DOCKERSAND_GIT_STRATEGY)' \
-    "  --ephemeral-tmp        Don't keep a clone session's /tmp (DOCKERSAND_EPHEMERAL_TMP=1)" \
-    '  --entrypoint <path>    Override the image entrypoint (DOCKERSAND_ENTRYPOINT)' \
-    '  --host-gateway <name>  Name the host; empty disables (DOCKERSAND_HOST_GATEWAY)' \
-    '  -p, --publish <spec>   Publish a port, on 127.0.0.1 by default (DOCKERSAND_PUBLISH)' \
-    '  --dind                 Enable nested Docker (DOCKERSAND_DIND=1)' \
-    '  --dbus                 Forward the session bus (DOCKERSAND_DBUS=1)' \
-    '  --gcloud               Forward a Google Cloud token (DOCKERSAND_GCLOUD=1)' \
-    '  --gh                   Forward a GitHub token (DOCKERSAND_GH=1)' \
-    '  --ssh                  Forward the SSH agent and known_hosts (DOCKERSAND_SSH=1)' \
-    '  --egress               Enable allowlisted egress (DOCKERSAND_EGRESS=1)'
+  cat <<'EOF'
+usage: dockersand run [options] [--] <app> [args...]
+       dockersand sessions list
+
+run options:
+  --session <name>       Create or resume a clone session (DOCKERSAND_SESSION)
+  --git-strategy <mode>  Select clone or mount (DOCKERSAND_GIT_STRATEGY)
+  --ephemeral-tmp        Don't keep a clone session's /tmp (DOCKERSAND_EPHEMERAL_TMP=1)
+  --entrypoint <path>    Override the image entrypoint (DOCKERSAND_ENTRYPOINT)
+  --host-gateway <name>  Name the host; empty disables (DOCKERSAND_HOST_GATEWAY)
+  -p, --publish <spec>   Publish a port, on 127.0.0.1 by default (DOCKERSAND_PUBLISH)
+  --dind                 Enable nested Docker (DOCKERSAND_DIND=1)
+  --dbus                 Forward the session bus (DOCKERSAND_DBUS=1)
+  --gcloud               Forward a Google Cloud token (DOCKERSAND_GCLOUD=1)
+  --gh                   Forward a GitHub token (DOCKERSAND_GH=1)
+  --ssh                  Forward the SSH agent and known_hosts (DOCKERSAND_SSH=1)
+  --egress               Enable allowlisted egress (DOCKERSAND_EGRESS=1)
+EOF
+}
+
+# Fails unless option $1 has a value. Takes the remaining arguments, "$@".
+need_value() {
+  if (( $# < 2 )) || [[ "$2" == --* ]]; then
+    die "$1 requires a value"
+  fi
 }
 
 # Launches the sandbox: everything after the app passes through to the image
 run_app() {
-  local img strategy work_dir publish_set=0
+  local img work_dir default_strategy=mount publish_set=0
 
   while (( $# )); do
     case "$1" in
@@ -555,30 +543,19 @@ run_app() {
       --egress) export DOCKERSAND_EGRESS=1; shift ;;
       --ephemeral-tmp) export DOCKERSAND_EPHEMERAL_TMP=1; shift ;;
       --session)
-        if [[ -z "${2:-}" || "$2" == --* ]]; then
-          echo '--session requires a name' >&2
-          exit 1
-        fi
+        need_value "$@"
+        # Empty would start a new random session instead of the one asked for
+        [[ -n "$2" ]] || die '--session requires a value'
         export DOCKERSAND_SESSION="$2"
         shift 2
         ;;
-      --git-strategy | --entrypoint | --host-gateway)
-        if (( $# < 2 )) || [[ "$2" == --* ]]; then
-          echo "$1 requires a value" >&2
-          exit 1
-        fi
-        case "$1" in
-          --git-strategy) export DOCKERSAND_GIT_STRATEGY="$2" ;;
-          --entrypoint) export DOCKERSAND_ENTRYPOINT="$2" ;;
-          --host-gateway) export DOCKERSAND_HOST_GATEWAY="$2" ;;
-        esac
-        shift 2
-        ;;
+      --git-strategy) need_value "$@"; export DOCKERSAND_GIT_STRATEGY="$2"; shift 2 ;;
+      --entrypoint) need_value "$@"; export DOCKERSAND_ENTRYPOINT="$2"; shift 2 ;;
+      --host-gateway) need_value "$@"; export DOCKERSAND_HOST_GATEWAY="$2"; shift 2 ;;
       -p | --publish)
-        if (( $# < 2 )) || [[ "$2" == -* || "$2" == *[[:space:]]* ]]; then
-          echo "$1 requires a port" >&2
-          exit 1
-        fi
+        need_value "$@"
+        # DOCKERSAND_PUBLISH separates its specs with spaces
+        [[ "$2" != *[[:space:]]* ]] || die "invalid port to publish: $2"
         # Repeatable: the first one replaces the environment's ports
         (( publish_set )) || DOCKERSAND_PUBLISH=""
         publish_set=1
@@ -595,8 +572,7 @@ run_app() {
   fi
   app="$1"
   if [[ "$app" == -* ]]; then
-    echo "invalid app: $app (must not start with -)" >&2
-    exit 1
+    die "invalid app: $app (must not start with -)"
   fi
   shift
 
@@ -613,26 +589,29 @@ run_app() {
   work_dir="/home/work/repos/$repo_dir"
   mount_src="$rp_repo"
   mount_dst="$work_dir"
-  # Assigned first: set -e ignores a failed substitution in a case word
-  strategy="$(git_strategy)"
-  case "$strategy" in
+  # DOCKERSAND_GIT_STRATEGY selects what the sandbox works in:
+  #   clone (default): a wholly separate clone per session (DOCKERSAND_SESSION)
+  #   mount: the checkout itself, including its .git
+  # Outside a repository there's no .git to protect, so mount is the default.
+  if (( in_repo )); then default_strategy=clone; fi
+  case "${DOCKERSAND_GIT_STRATEGY:-$default_strategy}" in
     clone) prepare_clone ;;
     mount)
       if [[ -n "${DOCKERSAND_SESSION:-}" ]]; then
-        echo "DOCKERSAND_SESSION needs DOCKERSAND_GIT_STRATEGY=clone" >&2
-        exit 1
+        die "DOCKERSAND_SESSION needs DOCKERSAND_GIT_STRATEGY=clone"
       fi
       ;;
+    *) die "unknown DOCKERSAND_GIT_STRATEGY: $DOCKERSAND_GIT_STRATEGY (expected mount or clone)" ;;
   esac
 
   echo "launching sandbox image $img..." >&2
 
   isolation_args
   run_hook
-  if [[ "${DOCKERSAND_SSH:-}" == 1 ]]; then forward_ssh; fi
-  if [[ "${DOCKERSAND_GCLOUD:-}" == 1 ]]; then forward_gcloud; fi
-  if [[ "${DOCKERSAND_GH:-}" == 1 ]]; then forward_gh; fi
-  if [[ "${DOCKERSAND_DBUS:-}" == 1 ]]; then forward_dbus; fi
+  if opted_in DOCKERSAND_SSH; then forward_ssh; fi
+  if opted_in DOCKERSAND_GCLOUD; then forward_gcloud; fi
+  if opted_in DOCKERSAND_GH; then forward_gh; fi
+  if opted_in DOCKERSAND_DBUS; then forward_dbus; fi
   forward_git_identity
   network_args
   # DOCKERSAND_ENTRYPOINT overrides the image's default entrypoint
