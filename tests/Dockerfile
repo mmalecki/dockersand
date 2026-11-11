@@ -7,7 +7,7 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends \
     busybox ca-certificates curl git openssh-client \
     dbus-bin libnotify-bin libsecret-tools \
-    uidmap slirp4netns iproute2 \
+    uidmap slirp4netns iproute2 procps \
  && rm -rf /var/lib/apt/lists/*
 
 RUN arch="$(dpkg --print-architecture)" \
