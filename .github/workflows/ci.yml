@@ -43,15 +43,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # From gVisor's apt repository, which its docs recommend over the
+      # release files, whose layout changes
       - name: Install gVisor
         run: |
-          url="https://storage.googleapis.com/gvisor/releases/release/latest/$(uname -m)"
-          cd "$RUNNER_TEMP"
-          curl -fsSL --remote-name-all \
-            "$url/runsc" "$url/runsc.sha512" \
-            "$url/containerd-shim-runsc-v1" "$url/containerd-shim-runsc-v1.sha512"
-          sha512sum -c runsc.sha512 containerd-shim-runsc-v1.sha512
-          sudo install -m 755 runsc containerd-shim-runsc-v1 /usr/local/bin/
+          curl -fsSL https://gvisor.dev/archive.key |
+            sudo gpg --dearmor -o /usr/share/keyrings/gvisor-archive-keyring.gpg
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/gvisor-archive-keyring.gpg] https://storage.googleapis.com/gvisor/releases release main" |
+            sudo tee /etc/apt/sources.list.d/gvisor.list >/dev/null
+          sudo apt-get update
+          sudo apt-get install -y runsc
+          # The package registers runsc with Docker, but without this flag
           sudo runsc install -- --host-uds=open
           sudo systemctl reload docker
           docker info --format '{{json .Runtimes}}'
