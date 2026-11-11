@@ -56,7 +56,7 @@ jobs:
           # The package registers runsc with Docker, but without this flag
           sudo runsc install -- --host-uds=open
           sudo systemctl reload docker
-          docker info --format '{{json .Runtimes}}'
+          docker info --format '{{with index .Runtimes "runsc"}}runsc: {{.Path}} {{.Args}}{{end}}'
 
       - name: Test real sandboxes
         run: bash tests/live.sh
