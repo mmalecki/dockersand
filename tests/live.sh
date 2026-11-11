@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Launches real sandboxes: needs Docker with runsc registered as a runtime,
-# configured with --host-uds=open for the SSH agent test.
+# Launches real sandboxes from tests/Dockerfile: needs Docker with runsc
+# registered as a runtime, configured with --host-uds=open for the SSH agent
+# and D-Bus tests, and dbus-daemon and dbus-send on the host.
 set -euo pipefail
 
 # shellcheck source=tests/lib.sh
@@ -36,14 +37,9 @@ work_uid="$(id -u)"
 if docker info --format '{{json .SecurityOptions}}' | grep -q name=rootless; then
   work_uid=0
 fi
-docker build -t "$image" --build-arg WORK_UID="$work_uid" - >"$fixture/build.log" 2>&1 <<'EOF' ||
-FROM alpine:3.22
-ARG WORK_UID
-RUN apk add --no-cache busybox-extras git openssh-client \
-  && if [ "$WORK_UID" != 0 ]; then adduser -D -u "$WORK_UID" work; fi
-USER $WORK_UID
-EOF
-  { cat "$fixture/build.log" >&2; fail 'test image build failed'; }
+root="${launcher%/*}"
+docker build -t "$image" --build-arg WORK_UID="$work_uid" -f "$root/tests/Dockerfile" "$root" \
+  >"$fixture/build.log" 2>&1 || { cat "$fixture/build.log" >&2; fail 'test image build failed'; }
 
 git config --global user.name 'Live Test'
 git config --global user.email live@example.test
@@ -108,7 +104,7 @@ test_mount_mode_shows_only_the_project() {
   [[ "$(sandbox "$image" ls -A /home/work/repos)" == repo ]] || fail 'more than the project under repos'
   sandbox "$image" sh -c 'echo written >from-sandbox'
   [[ "$(stat -c %u from-sandbox)" == "$(id -u)" ]] || fail 'the sandbox wrote as another host user'
-  found="$(sandbox "$image" sh -c 'find / -path /proc -prune -o -path /sys -prune -o \
+  found="$(sandbox "$image" sh -c 'find / \( -path /proc -o -path /sys -o -path /dev \) -prune -o \
     -type f -exec grep -lF "$0" {} + 2>/dev/null; true' "$marker")"
   [[ "$found" == /home/work/repos/repo/inside ]] || fail "marker found at: ${found:-nowhere}"
   cd "$repo"
@@ -155,7 +151,7 @@ test_sessions_list_follows_a_running_session() {
 
 test_published_ports_stay_on_loopback() {
   local address host_ip port
-  hold_session ports -p 8080 "$image" sh -c "httpd -p 8080 -h /home/work/repos/repo && $hold"
+  hold_session ports -p 8080 "$image" sh -c "busybox httpd -p 8080 -h /home/work/repos/repo && $hold"
   wait_for serving ports ||
     { cat "$fixture/ports.stderr" >&2; fail 'published port not reachable on loopback'; }
   address="$(docker port "dockersand-$checkout-ports" 8080)"
@@ -197,6 +193,16 @@ test_odd_project_paths_are_mounted() {
   echo 'PASS: projects with : , and " in their path launch in both strategies'
 }
 
+test_dbus_forwarding() {
+  command -v dbus-send >/dev/null || fail 'the D-Bus test needs dbus-send on the host'
+  bash "$root/tests/dbus-integration.sh" "$image"
+}
+
+# Mount mode from the repository root, as the README runs it
+test_nested_docker() {
+  (cd "$root" && sandbox DOCKERSAND_DIND=1 "$image" bash tests/dind.sh)
+}
+
 # Last, so that a local run on runc, aliased as runsc, checks everything else
 test_sandbox_runs_on_gvisor() {
   local kernel
@@ -213,4 +219,6 @@ test_sessions_list_follows_a_running_session
 test_published_ports_stay_on_loopback
 test_ssh_agent_and_known_hosts
 test_odd_project_paths_are_mounted
+test_dbus_forwarding
+test_nested_docker
 test_sandbox_runs_on_gvisor

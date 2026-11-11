@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Run inside an agents-based image launched with DOCKERSAND_DIND=1.
+# Run inside an image with rootless Docker, such as an agents-based one or
+# tests/Dockerfile, launched with DOCKERSAND_DIND=1.
 set -euo pipefail
 
 [[ "$(id -u)" != 0 ]] || { echo 'agent must run as a non-root user' >&2; exit 1; }
