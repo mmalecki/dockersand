@@ -7,6 +7,7 @@ on:
       - '**/*.bash'
       - 'dockersand*'
       - 'tests/**'
+      - 'dockerfiles/**'
       - '.github/workflows/**'
   pull_request:
     paths: *paths
@@ -35,3 +36,33 @@ jobs:
 
       - name: Test sessions
         run: bash tests/sessions.sh
+
+  live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # From gVisor's apt repository, which its docs recommend over the
+      # release files, whose layout changes
+      - name: Install gVisor
+        run: |
+          curl -fsSL https://gvisor.dev/archive.key |
+            sudo gpg --dearmor -o /usr/share/keyrings/gvisor-archive-keyring.gpg
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/gvisor-archive-keyring.gpg] https://storage.googleapis.com/gvisor/releases release main" |
+            sudo tee /etc/apt/sources.list.d/gvisor.list >/dev/null
+          sudo apt-get update
+          sudo apt-get install -y runsc dbus-bin
+          # The package registers runsc with Docker, but without this flag
+          sudo runsc install -- --host-uds=open
+          sudo systemctl reload docker
+          docker info --format '{{with index .Runtimes "runsc"}}runsc: {{.Path}} {{.Args}}{{end}}'
+
+      # Rootless Docker in --dind sandboxes needs unprivileged user
+      # namespaces, which Ubuntu restricts with AppArmor
+      - name: Allow unprivileged user namespaces
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
+      - name: Test real sandboxes
+        run: bash tests/live.sh

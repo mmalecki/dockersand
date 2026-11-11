@@ -21,6 +21,16 @@ export XDG_STATE_HOME="$fixture/state" FAKE_DOCKER_ARGS_FILE="$fixture/args"
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
+# Retries the command "$@" for up to 20 seconds, until it succeeds
+wait_for() {
+  local i
+  for ((i = 0; i < 100; i++)); do
+    "$@" && return 0
+    sleep 0.2
+  done
+  return 1
+}
+
 # Makes $1 a git repository with one empty commit
 make_repo() {
   mkdir -p "$1"

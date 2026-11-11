@@ -27,15 +27,6 @@ EOF
 chmod +x "$fixture/bin/gcloud" "$fixture/bin/gh"
 make_repo "$repo"
 
-wait_for() {
-  local i
-  for ((i = 0; i < 100; i++)); do
-    "$@" && return 0
-    sleep 0.2
-  done
-  return 1
-}
-
 assert_identity() {
   assert_arg "GIT_AUTHOR_NAME=$1"
   assert_arg "GIT_AUTHOR_EMAIL=$2"
