@@ -35,3 +35,26 @@ jobs:
 
       - name: Test sessions
         run: bash tests/sessions.sh
+
+  live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install gVisor
+        run: |
+          url="https://storage.googleapis.com/gvisor/releases/release/latest/$(uname -m)"
+          cd "$RUNNER_TEMP"
+          curl -fsSL --remote-name-all \
+            "$url/runsc" "$url/runsc.sha512" \
+            "$url/containerd-shim-runsc-v1" "$url/containerd-shim-runsc-v1.sha512"
+          sha512sum -c runsc.sha512 containerd-shim-runsc-v1.sha512
+          sudo install -m 755 runsc containerd-shim-runsc-v1 /usr/local/bin/
+          sudo runsc install -- --host-uds=open
+          sudo systemctl reload docker
+          docker info --format '{{json .Runtimes}}'
+
+      - name: Test real sandboxes
+        run: bash tests/live.sh

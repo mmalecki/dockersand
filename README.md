@@ -322,6 +322,9 @@ may be enlightening on the build-vs-buy conundrum.
 Run `bash tests/launcher.sh` to check Git identity resolution and runtime selection without a Docker daemon.
 Run `bash tests/remotes.sh` to check clone fetch/push URLs, host URL rewrites, and pushes to multiple local destinations.
 Run `bash tests/sessions.sh` to check session discovery, live status, and Docker failure handling using a mock Docker command.
+Run `bash tests/live.sh` to launch real sandboxes from a small test image it builds: it checks what the mount and clone
+strategies expose, sessions, published ports, SSH forwarding and that the sandbox runs on gVisor. It needs Docker with
+the `runsc` runtime, configured with `--host-uds=open`, and the host's `ssh-agent`, `ssh-keygen` and `curl`.
 After rebuilding the images, test nested builds, networking and Compose with:
 
 ```sh
