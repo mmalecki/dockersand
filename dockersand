@@ -513,6 +513,7 @@ run options:
   --entrypoint <path>    Override the image entrypoint (DOCKERSAND_ENTRYPOINT)
   --host-gateway <name>  Name the host; empty disables (DOCKERSAND_HOST_GATEWAY)
   -p, --publish <spec>   Publish a port, on 127.0.0.1 by default (DOCKERSAND_PUBLISH)
+  -e, --env <var[=val]>  Set a variable; a bare name forwards the host's value
   --dind                 Enable nested Docker (DOCKERSAND_DIND=1)
   --dbus                 Forward the session bus (DOCKERSAND_DBUS=1)
   --gcloud               Forward a Google Cloud token (DOCKERSAND_GCLOUD=1)
@@ -531,7 +532,8 @@ need_value() {
 
 # Launches the sandbox: everything after the app passes through to the image
 run_app() {
-  local img work_dir default_strategy=mount publish_set=0
+  local img work_dir var default_strategy=mount publish_set=0
+  local -a env_vars=()
 
   while (( $# )); do
     case "$1" in
@@ -560,6 +562,14 @@ run_app() {
         (( publish_set )) || DOCKERSAND_PUBLISH=""
         publish_set=1
         export DOCKERSAND_PUBLISH="${DOCKERSAND_PUBLISH:+$DOCKERSAND_PUBLISH }$2"
+        shift 2
+        ;;
+      -e | --env)
+        need_value "$@"
+        # Docker fails on an empty name only after a session is made, and
+        # would take a mistyped option such as -e -p as a variable
+        [[ "$2" =~ ^[^=-] ]] || die "invalid environment variable: $2 (expected NAME[=VALUE])"
+        env_vars+=("$2")
         shift 2
         ;;
       --) shift; break ;;
@@ -614,6 +624,11 @@ run_app() {
   if opted_in DOCKERSAND_DBUS; then forward_dbus; fi
   forward_git_identity
   network_args
+  # Last, so that they override the variables set above. Docker reads a bare
+  # name's value from its own environment, which keeps it out of the argv.
+  for var in "${env_vars[@]}"; do
+    sandbox_args+=(-e "$var")
+  done
   # DOCKERSAND_ENTRYPOINT overrides the image's default entrypoint
   if [[ -n "${DOCKERSAND_ENTRYPOINT:-}" ]]; then
     sandbox_args+=(--entrypoint "$DOCKERSAND_ENTRYPOINT")
