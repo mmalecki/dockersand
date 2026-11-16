@@ -6,6 +6,21 @@ unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR
 
 state="${XDG_STATE_HOME:-$HOME/.local/state}/dockersand"
 
+# Removed if the launch fails before docker run: an unfinished clone, and a
+# session directory this launch created. exec doesn't run the trap, so a
+# launch that reaches docker run keeps its session.
+clone_tmp=""
+new_session_dir=""
+cleanup_failed_launch() {
+  [[ -z "$clone_tmp" ]] || rm -rf "$clone_tmp"
+  if [[ -n "$new_session_dir" ]]; then
+    rm -rf "$new_session_dir"
+    # The checkout's directory too, if this was its only session
+    rmdir "${new_session_dir%/*}" 2>/dev/null || true
+  fi
+}
+trap cleanup_failed_launch EXIT
+
 # Arguments for docker run, collected by run_app and the functions it calls.
 # They also share app, the repo variables that resolve_repo sets, and the
 # mount_src and mount_dst of the project mount.
@@ -172,12 +187,12 @@ make_clone() {
   # Outside the session's repos, so an interrupted clone doesn't show up in the
   # sandbox. Global, as the EXIT trap doesn't see locals when set -e exits.
   clone_tmp="$(mktemp -d "$state/clone.tmp.XXXXXX")"
-  trap 'rm -rf "$clone_tmp"' EXIT
-  # From the common dir, so this works from linked worktrees too. No
-  # hardlinks: the sandbox could otherwise rewrite objects shared with the
-  # host repo.
-  git clone -q --no-hardlinks --no-checkout \
-    "$(git rev-parse --path-format=absolute --git-common-dir)" "$clone_tmp"
+  # --no-local: over Git's transport, which sends only what the refs reach.
+  # A local clone copies the whole object store, stashes and blobs that were
+  # only ever staged included, and can hardlink objects the sandbox could
+  # then rewrite. From this worktree's own git dir, not the common dir, so
+  # that a linked worktree's detached HEAD is sent too.
+  git clone -q --no-local --no-checkout "$(git rev-parse --absolute-git-dir)" "$clone_tmp"
   if branch="$(git symbolic-ref -q --short HEAD)"; then
     git -C "$clone_tmp" checkout -q -B "$branch" "$(git rev-parse HEAD)"
   else
@@ -206,7 +221,7 @@ make_clone() {
     [[ -d "$clone" ]] || die "failed to move the clone into $clone"
     rm -rf "$clone_tmp"
   fi
-  trap - EXIT
+  clone_tmp=""
 }
 
 # Makes or reuses the session's clone, and mounts it in place of the checkout,
@@ -236,6 +251,7 @@ prepare_clone() {
   session_dir="$state/sessions/$checkout_name/$session"
   repos="$session_dir/repos"
   clone="$repos/$repo_dir"
+  [[ -d "$session_dir" ]] || new_session_dir="$session_dir"
   mkdir -p "$session_dir/tmp"
   # 700 keeps other host users out of what the sandbox wrote, including the
   # world-writable tmp. That is 1777 like any /tmp, so whatever user the image
@@ -296,9 +312,12 @@ forward_ssh() {
 # Renamed into place, so the sandbox never reads a partial token. The whole
 # directory is mounted, as a file mount would keep the replaced inode.
 refresh_gcloud_token() {
-  gcloud auth print-access-token >"$1/token.tmp" &&
-    chmod 644 "$1/token.tmp" &&
+  if gcloud auth print-access-token >"$1/token.tmp" && chmod 644 "$1/token.tmp"; then
     mv -f "$1/token.tmp" "$1/token"
+  else
+    rm -f "$1/token.tmp"
+    return 1
+  fi
 }
 
 # Prints the start time of process $1, failing once it has quit. A zombie has
@@ -317,7 +336,7 @@ proc_start() {
 # A short-lived access token from the host's gcloud, and its default project.
 # Not ~/.config/gcloud, which holds refresh tokens and the account name.
 forward_gcloud() {
-  local token_root token_dir project sandbox_pid sandbox_start
+  local token_root token_dir project sandbox_pid sandbox_start retry_at=0
   if ! command -v gcloud >/dev/null; then
     die "DOCKERSAND_GCLOUD=1 needs gcloud on the host"
   fi
@@ -355,9 +374,10 @@ forward_gcloud() {
     trap '' INT HUP
     while [[ "$(proc_start "$sandbox_pid" 2>/dev/null)" == "$sandbox_start" ]]; do
       # By mtime, so a refresh is due straight away after a suspend. A failed
-      # refresh stops, rather than retrying with the host's credentials.
-      if [[ -n "$(find "$token_dir/token" -mmin +2)" ]]; then
-        refresh_gcloud_token "$token_dir" || exit
+      # refresh, such as one before the network is back, leaves the current
+      # token in place and is retried every 30 seconds.
+      if (( SECONDS >= retry_at )) && [[ -n "$(find "$token_dir/token" -mmin +2)" ]]; then
+        refresh_gcloud_token "$token_dir" || retry_at=$((SECONDS + 30))
       fi
       sleep 5
     done

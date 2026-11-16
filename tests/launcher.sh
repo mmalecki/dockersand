@@ -12,7 +12,7 @@ unset GH_TOKEN XDG_RUNTIME_DIR
 install_fake_docker
 cat >"$fixture/bin/gcloud" <<'EOF'
 #!/usr/bin/env bash
-[[ -z "${FAKE_GCLOUD_FAIL:-}" ]] || exit 1
+[[ -z "${FAKE_GCLOUD_FAIL:-}" && ! -e "$FAKE_GCLOUD_TOKEN_FILE.fail" ]] || exit 1
 case "$*" in
   "auth print-access-token") cat "$FAKE_GCLOUD_TOKEN_FILE" 2>/dev/null || echo fake-token ;;
   "config get project") echo fake-project ;;
@@ -105,6 +105,35 @@ test_clone_session_keeps_repos_and_tmp_together() {
   [[ "$(stat -c %a "$session_dir")" == 700 ]] || fail 'session directory is not private'
   [[ "$(stat -c %a "$session_dir/tmp")" == 1777 ]] || fail 'session tmp is not 1777'
   echo 'PASS: clone sessions keep repos and /tmp under one private session directory'
+}
+
+# A local clone would copy the whole object store
+test_clone_holds_only_committed_history() {
+  local staged stashed detached clone
+  echo staged-only >"$repo/staged"
+  git -C "$repo" add staged
+  staged="$(git -C "$repo" rev-parse :staged)"
+  git -C "$repo" rm -q --cached staged
+  git -C "$repo" add staged
+  git -C "$repo" stash -q
+  stashed="$(git -C "$repo" rev-parse 'stash@{0}')"
+  run_sandbox DOCKERSAND_GIT_STRATEGY=clone DOCKERSAND_SESSION=objects
+  clone="$XDG_STATE_HOME/dockersand/sessions/$checkout_name/objects/repos/$(basename "$repo")"
+  [[ "$(git -C "$clone" rev-parse HEAD)" == "$(git -C "$repo" rev-parse HEAD)" ]] || fail 'clone is not at the checkout HEAD'
+  ! git -C "$clone" cat-file -e "$staged" 2>/dev/null || fail 'clone holds a blob that was only staged'
+  ! git -C "$clone" cat-file -e "$stashed" 2>/dev/null || fail 'clone holds a stash'
+  git -C "$repo" stash drop -q
+
+  # A detached HEAD that no branch reaches, in a linked worktree
+  git -C "$repo" worktree add -q --detach "$fixture/detached"
+  git -C "$fixture/detached" commit -q --allow-empty -m 'Detached only'
+  detached="$(git -C "$fixture/detached" rev-parse HEAD)"
+  (cd "$fixture/detached" && DOCKERSAND_GIT_STRATEGY=clone DOCKERSAND_SESSION=detached "$launcher" run test env) \
+    2>"$fixture/stderr" || { cat "$fixture/stderr" >&2; fail 'launch from a detached worktree failed'; }
+  clone="$(echo "$XDG_STATE_HOME"/dockersand/sessions/detached-*/detached/repos/detached)"
+  [[ "$(git -C "$clone" rev-parse HEAD)" == "$detached" ]] || fail 'clone is not at the detached HEAD'
+  git -C "$repo" worktree remove --force "$fixture/detached"
+  echo 'PASS: clones hold committed history only, including a detached worktree HEAD'
 }
 
 test_ephemeral_tmp_skips_session_tmp() {
@@ -217,6 +246,21 @@ test_egress_switch_needs_running_proxy() {
   cmp -s "$fixture/egress-args" "$FAKE_DOCKER_ARGS_FILE" || fail '--egress differs from DOCKERSAND_EGRESS=1'
   expect_rejected run --egress test
   echo 'PASS: --egress matches the environment opt-in and requires a running proxy'
+}
+
+test_failed_launch_removes_only_its_new_session() {
+  local sessions="$XDG_STATE_HOME/dockersand/sessions"
+  expect_rejected DOCKERSAND_GIT_STRATEGY=clone DOCKERSAND_SESSION=failed run --egress test
+  [[ ! -e "$sessions/$checkout_name/failed" ]] || fail 'failed launch left its new session behind'
+  expect_rejected DOCKERSAND_GIT_STRATEGY=clone DOCKERSAND_SESSION=identity run --egress test
+  [[ -d "$session_dir/repos/$(basename "$repo")/.git" ]] || fail 'failed launch removed a session it resumed'
+  # The only session of a checkout takes the checkout's directory with it
+  make_repo "$fixture/lonely"
+  (cd "$fixture/lonely" && ! DOCKERSAND_GIT_STRATEGY=clone "$launcher" run --egress test 2>/dev/null) ||
+    fail 'launch without a proxy succeeded'
+  [[ -z "$(find "$sessions" -maxdepth 1 -name 'lonely-*')" ]] || fail 'failed launch left an empty checkout directory'
+  [[ -z "$(find "$XDG_STATE_HOME/dockersand" -maxdepth 1 -name 'clone.tmp.*')" ]] || fail 'failed launch left a temporary clone'
+  echo 'PASS: a failed launch removes the session it created, and no other'
 }
 
 test_run_passes_subcommand_names_through() {
@@ -402,6 +446,21 @@ test_gcloud_token_refreshes_while_running() {
   echo 'PASS: gcloud token refreshes while the sandbox runs'
 }
 
+# Still in the sandbox left running above
+test_gcloud_refresh_failure_keeps_token_and_retries() {
+  touch "$FAKE_GCLOUD_TOKEN_FILE.fail"
+  echo retried >"$FAKE_GCLOUD_TOKEN_FILE"
+  touch -d '3 minutes ago' "$token_dir/token"
+  # Long enough for the refresher to try, and fail
+  sleep 7
+  [[ "$(cat "$token_dir/token" 2>/dev/null)" == refreshed ]] || fail 'failed refresh removed the token'
+  [[ ! -e "$token_dir/token.tmp" ]] || fail 'failed refresh left a partial token'
+  rm "$FAKE_GCLOUD_TOKEN_FILE.fail"
+  wait_for grep -qx retried "$token_dir/token" || wait_for grep -qx retried "$token_dir/token" ||
+    fail 'refresh not retried'
+  echo 'PASS: a failed gcloud refresh keeps the token, and is retried'
+}
+
 test_gcloud_token_deleted_on_quit() {
   rm "$fixture/hold"
   wait "$sandbox" || fail 'launcher failed'
@@ -566,6 +625,7 @@ test_clone_uses_host_checkout_identity
 test_clone_session_keeps_repos_and_tmp_together
 test_ephemeral_tmp_skips_session_tmp
 test_session_switch_resumes_clone
+test_clone_holds_only_committed_history
 test_invalid_sessions_rejected
 test_valued_switches_need_values
 test_entrypoint_and_host_gateway_switches
@@ -573,6 +633,7 @@ test_published_ports_default_to_loopback
 test_publish_switches_override_environment
 test_invalid_ports_rejected
 test_egress_switch_needs_running_proxy
+test_failed_launch_removes_only_its_new_session
 test_run_passes_subcommand_names_through
 test_bare_apps_and_unknown_subcommands_print_usage
 test_registry_path_images_skip_repo_hooks
@@ -588,6 +649,7 @@ test_dind_switch_matches_environment
 test_switches_after_app_pass_through
 test_gcloud_token_forwarding_is_opt_in
 test_gcloud_token_refreshes_while_running
+test_gcloud_refresh_failure_keeps_token_and_retries
 test_gcloud_token_deleted_on_quit
 test_gcloud_token_deleted_when_unreaped
 test_gcloud_token_failure_prevents_launch
