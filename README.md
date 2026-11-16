@@ -46,7 +46,8 @@ outside a git repo) you are in at `/home/work/repos/<repo-name>` (where `repo-na
 If you are in a repository subdirectory, it drops you into the same one in the sandbox as well.
 
 Options go before the app name. Arguments after the app name pass through unchanged.
-Each option overrides its environment variable, where it has one.
+Each option overrides its environment variable, where it has one. The on/off variables take `1` or `true` for on,
+and `0`, `false` or nothing for off; any other value is an error, rather than a launch without what you asked for.
 
 | Option | Environment variable | Effect |
 | --- | --- | --- |

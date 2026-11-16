@@ -31,9 +31,24 @@ die() {
   exit 1
 }
 
-# Whether the opt-in environment variable $1 is set to 1
+# Whether the opt-in environment variable $1 is on. check_opt_ins has
+# already rejected values that are neither on nor off.
 opted_in() {
-  [[ "${!1:-}" == 1 ]]
+  [[ "${!1:-}" == 1 || "${!1:-}" == true ]]
+}
+
+# Fails on an opt-in variable that is neither on (1, true) nor off (0, false,
+# empty). Taking any other value as off would, for DOCKERSAND_EGRESS=yes,
+# quietly launch with an open network.
+check_opt_ins() {
+  local var
+  for var in DOCKERSAND_DIND DOCKERSAND_DBUS DOCKERSAND_GCLOUD DOCKERSAND_GH \
+    DOCKERSAND_SSH DOCKERSAND_EGRESS DOCKERSAND_EPHEMERAL_TMP; do
+    case "${!var:-}" in
+      '' | 0 | 1 | true | false) ;;
+      *) die "invalid $var: ${!var} (expected 1, true, 0 or false)" ;;
+    esac
+  done
 }
 
 session_container_name() {
@@ -606,6 +621,7 @@ run_app() {
   fi
   shift
 
+  check_opt_ins
   resolve_repo
   # A per-repo image takes precedence
   img="$app"

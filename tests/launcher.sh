@@ -263,6 +263,30 @@ test_failed_launch_removes_only_its_new_session() {
   echo 'PASS: a failed launch removes the session it created, and no other'
 }
 
+test_opt_in_values() {
+  local var value
+  run_sandbox DOCKERSAND_EGRESS=1 FAKE_EGRESS_PROXY=1
+  cp "$FAKE_DOCKER_ARGS_FILE" "$fixture/on-args"
+  run_sandbox DOCKERSAND_EGRESS=true FAKE_EGRESS_PROXY=1
+  cmp -s "$fixture/on-args" "$FAKE_DOCKER_ARGS_FILE" || fail 'true differs from 1'
+  run_sandbox
+  cp "$FAKE_DOCKER_ARGS_FILE" "$fixture/off-args"
+  for value in '' 0 false; do
+    run_sandbox "DOCKERSAND_EGRESS=$value" "DOCKERSAND_DIND=$value" "DOCKERSAND_SSH=$value" FAKE_EGRESS_PROXY=1
+    cmp -s "$fixture/off-args" "$FAKE_DOCKER_ARGS_FILE" || fail "'$value' is not off"
+  done
+  for var in DIND DBUS GCLOUD GH SSH EGRESS EPHEMERAL_TMP; do
+    for value in yes TRUE 2 ' 1'; do
+      expect_rejected "DOCKERSAND_$var=$value" FAKE_EGRESS_PROXY=1 run test env
+      grep -Fq "invalid DOCKERSAND_$var" "$fixture/stderr" || fail "missing diagnostic for DOCKERSAND_$var=$value"
+    done
+  done
+  # A switch replaces whatever the environment held
+  run_sandbox DOCKERSAND_EGRESS=yes FAKE_EGRESS_PROXY=1 --egress test env
+  cmp -s "$fixture/on-args" "$FAKE_DOCKER_ARGS_FILE" || fail '--egress did not override an invalid value'
+  echo 'PASS: opt-ins take 1/true and 0/false/empty, and reject anything else'
+}
+
 test_run_passes_subcommand_names_through() {
   local image
   for image in sessions run; do
@@ -634,6 +658,7 @@ test_publish_switches_override_environment
 test_invalid_ports_rejected
 test_egress_switch_needs_running_proxy
 test_failed_launch_removes_only_its_new_session
+test_opt_in_values
 test_run_passes_subcommand_names_through
 test_bare_apps_and_unknown_subcommands_print_usage
 test_registry_path_images_skip_repo_hooks
