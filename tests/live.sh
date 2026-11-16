@@ -181,6 +181,15 @@ test_ssh_agent_and_known_hosts() {
   echo 'PASS: --ssh forwards the agent, and known_hosts read-only'
 }
 
+# The launcher sets GIT_AUTHOR_NAME from the global config, which -e overrides
+test_env_switches_set_variables() {
+  local out
+  out="$(sandbox HOST_ONLY='from the host' -e 'LITERAL=two words' -e HOST_ONLY --env GIT_AUTHOR_NAME=Override \
+    "$image" sh -c 'printf "%s\n" "$LITERAL" "$HOST_ONLY" "$GIT_AUTHOR_NAME"')"
+  [[ "$out" == $'two words\nfrom the host\nOverride' ]] || fail "sandbox variables differ: $out"
+  echo "PASS: -e sets variables, forwards bare names from the host, and overrides the launcher's"
+}
+
 # Docker splits -v on ':' and parses --mount as CSV
 test_odd_project_paths_are_mounted() {
   local weird='we:ird,na"me' out
@@ -218,6 +227,7 @@ test_clone_sessions_resume_with_their_tmp
 test_sessions_list_follows_a_running_session
 test_published_ports_stay_on_loopback
 test_ssh_agent_and_known_hosts
+test_env_switches_set_variables
 test_odd_project_paths_are_mounted
 test_dbus_forwarding
 test_nested_docker

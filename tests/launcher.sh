@@ -34,12 +34,12 @@ assert_identity() {
   assert_arg "GIT_COMMITTER_EMAIL=${4:-$2}"
 }
 
-# Each -p value, in order
-published() {
+# Sets values to each value of docker run option $1, in order
+option_values() {
   local i
-  ports=()
+  values=()
   for i in "${!args[@]}"; do
-    [[ "${args[$i]}" != -p ]] || ports+=("${args[$((i + 1))]}")
+    [[ "${args[$i]}" != "$1" ]] || values+=("${args[$((i + 1))]}")
   done
 }
 
@@ -147,7 +147,7 @@ test_invalid_sessions_rejected() {
 
 test_valued_switches_need_values() {
   local option suffix argv
-  for option in --git-strategy --entrypoint --host-gateway; do
+  for option in --git-strategy --entrypoint --host-gateway -e --env; do
     for suffix in '' '--ssh test'; do
       read -ra argv <<<"$suffix"
       expect_rejected run "$option" "${argv[@]}"
@@ -176,19 +176,19 @@ test_entrypoint_and_host_gateway_switches() {
 test_published_ports_default_to_loopback() {
   local expected
   run_sandbox
-  published
-  (( ! ${#ports[@]} )) || fail 'ports published without DOCKERSAND_PUBLISH'
+  option_values -p
+  (( ! ${#values[@]} )) || fail 'ports published without DOCKERSAND_PUBLISH'
   run_sandbox DOCKERSAND_PUBLISH='80 8080:80 8000-8010:8000-8010/udp 0.0.0.0:9090:90 [::1]:9091:91/tcp 127.0.0.2::92'
-  published
+  option_values -p
   expected=(127.0.0.1::80 127.0.0.1:8080:80 127.0.0.1:8000-8010:8000-8010/udp 0.0.0.0:9090:90 '[::1]:9091:91/tcp' 127.0.0.2::92)
-  [[ "${ports[*]}" == "${expected[*]}" ]] || fail "unexpected published ports: ${ports[*]}"
+  [[ "${values[*]}" == "${expected[*]}" ]] || fail "unexpected published ports: ${values[*]}"
   echo 'PASS: published ports default to loopback and keep explicit host addresses'
 }
 
 test_publish_switches_override_environment() {
   run_sandbox DOCKERSAND_PUBLISH=ignored -p 80 --publish 8080:80 test env
-  published
-  [[ "${ports[*]}" == '127.0.0.1::80 127.0.0.1:8080:80' ]] || fail "-p did not replace the environment: ${ports[*]}"
+  option_values -p
+  [[ "${values[*]}" == '127.0.0.1::80 127.0.0.1:8080:80' ]] || fail "-p did not replace the environment: ${values[*]}"
   echo 'PASS: -p and --publish repeat and override DOCKERSAND_PUBLISH'
 }
 
@@ -358,7 +358,7 @@ test_dind_switch_matches_environment() {
 
 test_switches_after_app_pass_through() {
   local app_args i
-  app_args=(--dind --dbus --gcloud --gh --ssh --egress --ephemeral-tmp --session 'two words' --git-strategy mount --entrypoint /bin/bash --host-gateway '' -p 80)
+  app_args=(--dind --dbus --gcloud --gh --ssh --egress --ephemeral-tmp --session 'two words' --git-strategy mount --entrypoint /bin/bash --host-gateway '' -p 80 -e FOO=bar)
   run_sandbox test "${app_args[@]}"
   assert_arg --runtime=runsc
   assert_no_arg DOCKERSAND_DIND=1
@@ -367,6 +367,9 @@ test_switches_after_app_pass_through() {
     [[ "${args[$(( ${#args[@]} - ${#app_args[@]} + i ))]}" == "${app_args[$i]}" ]] ||
       fail 'app arguments were not preserved'
   done
+  # Docker's own arguments, before the app's
+  args=("${args[@]:0:${#args[@]} - ${#app_args[@]}}")
+  assert_no_arg FOO=bar
   echo 'PASS: switches after the app are passed through without enabling integrations'
 }
 
@@ -523,6 +526,39 @@ test_ssh_switch_matches_environment() {
   echo 'PASS: --ssh matches the environment opt-in and overrides DOCKERSAND_SSH=0'
 }
 
+test_env_switches_follow_hook_and_launcher_variables() {
+  local expected n
+  printf '#!/usr/bin/env bash\nprintf "%%s\\n" -e HOOK_VAR=hook\n' >"$fixture/bin/dockersand-args-test"
+  chmod +x "$fixture/bin/dockersand-args-test"
+  run_sandbox 'GIT_AUTHOR_NAME=Launcher Name' GH_TOKEN=host-secret \
+    -e 'GIT_AUTHOR_NAME=Override Name' --env 'SPACED=two words=and equals' -e HOOK_VAR=user -e GH_TOKEN -e EMPTY= test env
+  rm -f "$fixture/bin/dockersand-args-test"
+  option_values -e
+  expected=('GIT_AUTHOR_NAME=Override Name' 'SPACED=two words=and equals' HOOK_VAR=user GH_TOKEN EMPTY=)
+  n=${#expected[@]}
+  (( ${#values[@]} > n )) || fail "too few variables: ${values[*]}"
+  [[ "$(printf '%s\n' "${values[@]: -n}")" == "$(printf '%s\n' "${expected[@]}")" ]] ||
+    fail "-e values not last and in order: ${values[*]}"
+  assert_arg 'GIT_AUTHOR_NAME=Launcher Name'
+  assert_arg HOOK_VAR=hook
+  # A bare name leaves the value to Docker's environment, out of the argv
+  assert_no_arg_matching '*host-secret*'
+  [[ "$(<"$FAKE_DOCKER_ARGS_FILE.gh-token")" == host-secret ]] || fail "bare name not in Docker's environment"
+  echo 'PASS: -e and --env repeat in order, after the hook and launcher variables they override'
+}
+
+test_invalid_env_rejected() {
+  local bad
+  for bad in '' =value -p; do
+    expect_rejected run -e "$bad" test
+    grep -Fq 'invalid environment variable' "$fixture/stderr" || fail "missing diagnostic for -e '$bad'"
+  done
+  expect_rejected DOCKERSAND_GIT_STRATEGY=clone DOCKERSAND_SESSION=badenv run --env =value test
+  [[ ! -e "$XDG_STATE_HOME/dockersand/sessions/$checkout_name/badenv" ]] ||
+    fail 'invalid variable left a session behind'
+  echo 'PASS: empty and option-like variable names are rejected before a session is made'
+}
+
 test_repository_identity_without_global_config
 test_global_identity_and_default_isolation
 test_repository_identity_overrides_global
@@ -564,3 +600,5 @@ test_mount_quotes_odd_project_directory
 test_clone_quotes_odd_state_directory
 test_ssh_mounts_quoted_and_known_hosts_read_only
 test_ssh_switch_matches_environment
+test_env_switches_follow_hook_and_launcher_variables
+test_invalid_env_rejected

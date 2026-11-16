@@ -42,7 +42,7 @@ outside a git repo) you are in at `/home/work/repos/<repo-name>` (where `repo-na
 If you are in a repository subdirectory, it drops you into the same one in the sandbox as well.
 
 Options go before the app name. Arguments after the app name pass through unchanged.
-Each option overrides its environment variable.
+Each option overrides its environment variable, where it has one.
 
 | Option | Environment variable | Effect |
 | --- | --- | --- |
@@ -51,6 +51,7 @@ Each option overrides its environment variable.
 | `--entrypoint <path>` | `DOCKERSAND_ENTRYPOINT=<path>` | Override the image entrypoint |
 | `--host-gateway <name>` | `DOCKERSAND_HOST_GATEWAY=<name>` | Name the host; `''` disables the mapping |
 | `-p`, `--publish <spec>` | `DOCKERSAND_PUBLISH='<spec> ...'` | Publish a port, on `127.0.0.1` by default |
+| `-e`, `--env <name>[=<value>]` | — | Set a variable in the sandbox; a bare name forwards the host's value |
 | `--dind` | `DOCKERSAND_DIND=1` | Enable nested Docker |
 | `--dbus` | `DOCKERSAND_DBUS=1` | Forward the host session bus |
 | `--gcloud` | `DOCKERSAND_GCLOUD=1` | Forward a Google Cloud access token |
@@ -60,6 +61,10 @@ Each option overrides its environment variable.
 | `--ephemeral-tmp` | `DOCKERSAND_EPHEMERAL_TMP=1` | Don't keep a clone session's `/tmp` |
 
 For example: `dockersand run --session feature --ssh --gh codex`.
+
+`-e` and `--env` repeat, like `docker run -e`, and override variables that dockersand or a per-app hook set, such as
+`GIT_AUTHOR_NAME`. A `NAME=VALUE` value is visible on the host in `docker run`'s arguments, so pass secrets as a bare
+name: `-e NAME` forwards `NAME` from your environment without putting its value on the command line.
 
 The easiest way to explore the environment (without building anything) is running `dockersand run alpine`.
 If you've built the base images, running `dockersand run bash` will get you the same environment the agent images run in.
