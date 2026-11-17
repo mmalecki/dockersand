@@ -46,7 +46,8 @@ outside a git repo) you are in at `/home/work/repos/<repo-name>` (where `repo-na
 If you are in a repository subdirectory, it drops you into the same one in the sandbox as well.
 
 Options go before the app name. Arguments after the app name pass through unchanged.
-Each option overrides its environment variable, where it has one.
+Each option overrides its environment variable, where it has one. The on/off variables take `1` or `true` for on,
+and `0`, `false` or nothing for off; any other value is an error, rather than a launch without what you asked for.
 
 | Option | Environment variable | Effect |
 | --- | --- | --- |
@@ -95,7 +96,7 @@ mount only what the app needs.
 `--git-strategy` selects what the sandbox works in: `clone` (the default) or `mount`.
 
 With `clone`, the sandbox works in a separate clone, so it doesn't see uncommitted changes and can't modify your
-`.git`. Each `dockersand run` is a new session with its own clone, kept at `~/.local/state/dockersand/sessions/<checkout>/<session>/repos/<repo-name>`,
+`.git`. The clone holds what your branches and tags reach: not stashes, nor files you staged but never committed. Each `dockersand run` is a new session with its own clone, kept at `~/.local/state/dockersand/sessions/<checkout>/<session>/repos/<repo-name>`,
 so sandboxes started from the same checkout don't share anything. The clone starts on your current branch, has
 your remotes, and is independent of the working copy. Bring the work back from your sandbox:
 
@@ -247,8 +248,9 @@ dockersand run --gcloud <app> [args...]
 
 While the sandbox runs, a background process on the host asks gcloud for the token every 2 minutes. Usually that returns
 gcloud's cached token, which it renews once under ~4 minutes of its hour remain. The process stops and deletes the
-token as soon as the sandbox quits, and also stops if a refresh fails, after which gcloud in the sandbox loses access
-within the hour. Tokens are kept in `$XDG_RUNTIME_DIR/dockersand` (or `~/.local/state/dockersand`). With
+token as soon as the sandbox quits. A failed refresh, such as one made before the network is back after a suspend, is
+retried every 30 seconds; gcloud in the sandbox keeps its current token meanwhile, and loses access only if that
+expires first. Tokens are kept in `$XDG_RUNTIME_DIR/dockersand` (or `~/.local/state/dockersand`). With
 `--egress`, `squid.conf` also needs to allow `.googleapis.com`.
 
 ### GitHub CLI
