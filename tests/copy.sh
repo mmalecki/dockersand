@@ -120,6 +120,18 @@ test_planted_links_are_not_followed() {
   echo 'PASS: --cp replaces a planted link to a file, and refuses one to a directory or the clone'
 }
 
+# The copy holds the file's content until it's renamed into place
+test_failed_copy_leaves_no_partial_copy() {
+  rm "$clone/.env"
+  mkdir "$clone/.env"
+  expect_rejected DOCKERSAND_GIT_STRATEGY=clone DOCKERSAND_SESSION=copied run --cp .env test env
+  grep -Fq "can't replace repo/.env in the clone" "$fixture/stderr" || fail 'missing replace diagnostic'
+  [[ -z "$(find "$clone" -name '.dockersand-cp.*')" ]] || fail 'a failed copy left its content behind'
+  rmdir "$clone/.env"
+  run_copied --cp .env test env
+  echo 'PASS: a copy that cannot replace what is in the clone fails the launch, and leaves nothing behind'
+}
+
 test_files_it_cannot_copy_are_rejected() {
   local option argv
   expect_copy_rejected missing 'no such file'
@@ -179,6 +191,7 @@ test_files_the_sandbox_could_commit_are_rejected() {
 test_resumed_clones_must_ignore_files_too() {
   expect_rejected DOCKERSAND_GIT_STRATEGY=clone DOCKERSAND_SESSION=copied run --cp docs/draft.txt test env
   grep -Fq "docs/.gitignore differs in the session's clone" "$fixture/stderr" || fail 'missing clone .gitignore diagnostic'
+  grep -Fq 'or start a new session' "$fixture/stderr" || fail 'missing clone .gitignore remedy'
   [[ ! -e "$clone/docs/draft.txt" ]] || fail 'draft copied into a clone that does not ignore it'
   cp "$clone/.gitignore" "$fixture/clone-gitignore"
   echo '!.env' >>"$clone/.gitignore"
@@ -198,6 +211,7 @@ test_relative_to_an_untracked_directory
 test_resuming_replaces_only_with_the_switch
 test_tracked_and_linked_files
 test_planted_links_are_not_followed
+test_failed_copy_leaves_no_partial_copy
 test_files_it_cannot_copy_are_rejected
 test_files_the_sandbox_could_commit_are_rejected
 test_resumed_clones_must_ignore_files_too

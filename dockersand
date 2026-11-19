@@ -259,27 +259,26 @@ check_ignored() {
   [[ "$listed" == "$rel" ]] ||
     die "--cp $path: not ignored by the repository's .gitignore, so the sandbox could commit it"
   # That was by the checkout's .gitignore files, so those on the way to the
-  # file must match the clone's. --no-filters: filters are commands from the
-  # checkout's config.
+  # file must match the clone's
   while :; do
     ignore="${dir:+$dir/}.gitignore"
-    ours=""
-    if [[ -f "$rp_repo/$ignore" ]]; then
-      ours="$(host_git hash-object --no-filters -- "$ignore")"
-    fi
     if [[ -d "$clone" ]]; then
       # Only read, so a link the sandbox planted can do no harm, but it
       # doesn't match
-      theirs=""
-      if [[ -L "$clone/$ignore" ]]; then
-        theirs='a link'
-      elif [[ -f "$clone/$ignore" ]]; then
-        theirs="$(host_git hash-object --no-filters -- "$clone/$ignore")"
-      fi
-      [[ "$ours" == "$theirs" ]] ||
-        die "--cp $path: $ignore differs in the session's clone, so the sandbox could commit it"
+      if [[ -f "$rp_repo/$ignore" ]]; then
+        [[ ! -L "$clone/$ignore" && -f "$clone/$ignore" ]] &&
+          cmp -s -- "$rp_repo/$ignore" "$clone/$ignore"
+      else
+        [[ ! -e "$clone/$ignore" && ! -L "$clone/$ignore" ]]
+      fi || die "--cp $path: $ignore differs in the session's clone, so the sandbox could commit it;" \
+        "make them match, or start a new session"
     else
-      # A new clone checks out HEAD
+      # A new clone checks out HEAD. --no-filters: filters are commands from
+      # the checkout's config.
+      ours=""
+      if [[ -f "$rp_repo/$ignore" ]]; then
+        ours="$(host_git hash-object --no-filters -- "$ignore")"
+      fi
       theirs="$(host_git rev-parse -q --verify "HEAD:$ignore")" || theirs=""
       [[ "$ours" == "$theirs" ]] ||
         die "--cp $path: commit $ignore first; a new clone has only committed .gitignore files"
