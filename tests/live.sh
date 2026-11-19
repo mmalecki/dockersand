@@ -137,6 +137,22 @@ test_clone_sessions_resume_with_their_tmp() {
   echo 'PASS: resumed sessions keep their clone, and their /tmp unless --ephemeral-tmp'
 }
 
+# The image's user, with the host user's uid, reads and edits a copy that only
+# that uid can read
+test_copied_files_reach_the_sandbox() {
+  local out
+  echo .env >.gitignore
+  git add .gitignore
+  git commit -qm 'Ignore .env'
+  echo SECRET=live >.env
+  chmod 600 .env
+  out="$(sandbox DOCKERSAND_GIT_STRATEGY=clone DOCKERSAND_SESSION=copied --cp .env "$image" \
+    sh -c 'cat .env; echo edited >>.env && echo writable')"
+  [[ "$out" == $'SECRET=live\nwritable' ]] || fail "copy not usable in the sandbox: $out"
+  [[ "$(<.env)" == SECRET=live ]] || fail 'the sandbox changed the original'
+  echo 'PASS: --cp files are readable and writable in the sandbox, which edits only its copy'
+}
+
 test_sessions_list_follows_a_running_session() {
   hold_session held "$image" sh -c "$hold"
   wait_for session_is held running ||
@@ -224,6 +240,7 @@ cd "$repo"
 test_mount_mode_shows_only_the_project
 test_clone_mode_leaves_the_checkout_alone
 test_clone_sessions_resume_with_their_tmp
+test_copied_files_reach_the_sandbox
 test_sessions_list_follows_a_running_session
 test_published_ports_stay_on_loopback
 test_ssh_agent_and_known_hosts

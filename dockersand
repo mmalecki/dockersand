@@ -6,13 +6,15 @@ unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR
 
 state="${XDG_STATE_HOME:-$HOME/.local/state}/dockersand"
 
-# Removed if the launch fails before docker run: an unfinished clone, and a
-# session directory this launch created. exec doesn't run the trap, so a
-# launch that reaches docker run keeps its session.
+# Removed if the launch fails before docker run: an unfinished clone, an
+# unfinished --cp copy, and a session directory this launch created. exec
+# doesn't run the trap, so a launch that reaches docker run keeps its session.
 clone_tmp=""
+copy_tmp=""
 new_session_dir=""
 cleanup_failed_launch() {
   [[ -z "$clone_tmp" ]] || rm -rf "$clone_tmp"
+  [[ -z "$copy_tmp" ]] || rm -f "$copy_tmp"
   if [[ -n "$new_session_dir" ]]; then
     rm -rf "$new_session_dir"
     # The checkout's directory too, if this was its only session
@@ -25,6 +27,9 @@ trap cleanup_failed_launch EXIT
 # They also share app, the repo variables that resolve_repo sets, and the
 # mount_src and mount_dst of the project mount.
 sandbox_args=()
+# The --cp files, as given, and check_copies' path of each in the checkout
+copy_paths=()
+copy_rels=()
 
 die() {
   echo "$*" >&2
@@ -239,6 +244,105 @@ make_clone() {
   clone_tmp=""
 }
 
+# Git in the host checkout, for the --cp checks: pathspecs taken literally,
+# and no fsmonitor command from the checkout's config
+host_git() {
+  git --literal-pathspecs -c core.fsmonitor=false -C "$rp_repo" "$@"
+}
+
+# Fails unless clone $3 ignores --cp file $1, at $2 in the checkout, by its
+# .gitignore files: it doesn't get .git/info/exclude or core.excludesFile.
+check_ignored() {
+  local path="$1" rel="$2" clone="$3" rest="$2" dir="" listed ignore ours theirs
+  IFS= read -r -d '' listed < <(host_git ls-files -z --others --ignored \
+    --exclude-per-directory=.gitignore -- "$rel") || true
+  [[ "$listed" == "$rel" ]] ||
+    die "--cp $path: not ignored by the repository's .gitignore, so the sandbox could commit it"
+  # That was by the checkout's .gitignore files, so those on the way to the
+  # file must match the clone's
+  while :; do
+    ignore="${dir:+$dir/}.gitignore"
+    if [[ -d "$clone" ]]; then
+      # Only read, so a link the sandbox planted can do no harm, but it
+      # doesn't match
+      if [[ -f "$rp_repo/$ignore" ]]; then
+        [[ ! -L "$clone/$ignore" && -f "$clone/$ignore" ]] &&
+          cmp -s -- "$rp_repo/$ignore" "$clone/$ignore"
+      else
+        [[ ! -e "$clone/$ignore" && ! -L "$clone/$ignore" ]]
+      fi || die "--cp $path: $ignore differs in the session's clone, so the sandbox could commit it;" \
+        "make them match, or start a new session"
+    else
+      # A new clone checks out HEAD. --no-filters: filters are commands from
+      # the checkout's config.
+      ours=""
+      if [[ -f "$rp_repo/$ignore" ]]; then
+        ours="$(host_git hash-object --no-filters -- "$ignore")"
+      fi
+      theirs="$(host_git rev-parse -q --verify "HEAD:$ignore")" || theirs=""
+      [[ "$ours" == "$theirs" ]] ||
+        die "--cp $path: commit $ignore first; a new clone has only committed .gitignore files"
+    fi
+    [[ "$rest" == */* ]] || break
+    dir="${dir:+$dir/}${rest%%/*}"
+    rest="${rest#*/}"
+  done
+}
+
+# Fails unless each --cp file can go into clone $1, which may not exist yet.
+# Sets copy_rels.
+check_copies() {
+  local clone="$1" path dir rel entry
+  for path in "${copy_paths[@]}"; do
+    [[ -e "$path" ]] || die "--cp $path: no such file"
+    [[ -f "$path" ]] || die "--cp $path: not a regular file"
+    [[ -r "$path" ]] || die "--cp $path: not readable"
+    # Directory links resolve, but the file's own doesn't: the sandbox gets
+    # its target's content under its name
+    dir="$(realpath -e -- "$(dirname -- "$path")")"
+    rel="${dir%/}/$(basename -- "$path")"
+    [[ "$rel" == "$rp_repo"/* ]] || die "--cp $path: outside the checkout"
+    rel="${rel#"$rp_repo"/}"
+    [[ "/$rel/" != */.git/* ]] || die "--cp $path: inside .git"
+    # The clone has a tracked file already, which the copy changes. A link
+    # would land as a file, though, which commits as a type change, or with
+    # its target's content.
+    IFS= read -r -d '' entry < <(host_git ls-tree -z HEAD -- "$rel") || true
+    if [[ -L "$path" || "$entry" != 100???' blob '*$'\t'"$rel" ]]; then
+      check_ignored "$path" "$rel" "$clone"
+    fi
+    copy_rels+=("$rel")
+  done
+}
+
+# Copies the --cp files into the clone, under $1. The sandbox controls
+# everything there, the clone included, and could have planted links to send
+# a copy onto a host file. So each directory on the way from $1 must be a real
+# one, and each file is renamed into place, which replaces a link rather than
+# writing through it. prepare_clone has checked that the session isn't running.
+copy_files() {
+  local repos="$1" i rel rest part dir
+  for i in "${!copy_paths[@]}"; do
+    rel="$repo_dir/${copy_rels[$i]}"
+    rest="${rel%/*}"
+    dir="$repos"
+    while [[ -n "$rest" ]]; do
+      part="${rest%%/*}"
+      if [[ "$rest" == */* ]]; then rest="${rest#*/}"; else rest=""; fi
+      dir="$dir/$part"
+      if [[ ! -e "$dir" && ! -L "$dir" ]]; then
+        mkdir -- "$dir"
+      elif [[ -L "$dir" || ! -d "$dir" ]]; then
+        die "--cp ${copy_paths[$i]}: ${dir#"$repos/"} is not a directory in the clone"
+      fi
+    done
+    copy_tmp="$(mktemp -- "$dir/.dockersand-cp.XXXXXX")"
+    cp --preserve=mode,timestamps -- "${copy_paths[$i]}" "$copy_tmp"
+    mv -T -- "$copy_tmp" "$dir/${rel##*/}" || die "--cp ${copy_paths[$i]}: can't replace $rel in the clone"
+    copy_tmp=""
+  done
+}
+
 # Makes or reuses the session's clone, and mounts it in place of the checkout,
 # and the session's /tmp unless DOCKERSAND_EPHEMERAL_TMP=1
 prepare_clone() {
@@ -259,13 +363,15 @@ prepare_clone() {
   if docker container inspect "$container_name" >/dev/null 2>&1; then
     die "session $session is already running (container $container_name)"
   fi
-  echo "session $session, resume with: dockersand run --session $session $app" >&2
   # Everything the session keeps is under session_dir, so deleting it drops the
   # session. The whole of ~/repos is mounted, with the clone in it, so that
   # worktrees the sandbox creates next to the clone (../<name>) persist too.
   session_dir="$state/sessions/$checkout_name/$session"
   repos="$session_dir/repos"
   clone="$repos/$repo_dir"
+  # Before the session is made, so a file that can't be copied leaves none
+  check_copies "$clone"
+  echo "session $session, resume with: dockersand run --session $session $app" >&2
   [[ -d "$session_dir" ]] || new_session_dir="$session_dir"
   mkdir -p "$session_dir/tmp"
   # 700 keeps other host users out of what the sandbox wrote, including the
@@ -278,6 +384,9 @@ prepare_clone() {
     mkdir -p "$repos"
     make_clone "$clone"
   fi
+  # Before the check below, so a launch from an untracked directory that
+  # --cp makes starts in it
+  copy_files "$repos"
   # Untracked directories don't exist in the clone
   [[ -d "$clone/$subdir" ]] || subdir=""
   mount_src="$repos"
@@ -545,6 +654,7 @@ run options:
   --session <name>       Create or resume a clone session (DOCKERSAND_SESSION)
   --git-strategy <mode>  Select clone or mount (DOCKERSAND_GIT_STRATEGY)
   --ephemeral-tmp        Don't keep a clone session's /tmp (DOCKERSAND_EPHEMERAL_TMP=1)
+  --cp <path>            Copy a file from the checkout into a clone session
   --entrypoint <path>    Override the image entrypoint (DOCKERSAND_ENTRYPOINT)
   --host-gateway <name>  Name the host; empty disables (DOCKERSAND_HOST_GATEWAY)
   -p, --publish <spec>   Publish a port, on 127.0.0.1 by default (DOCKERSAND_PUBLISH)
@@ -584,6 +694,12 @@ run_app() {
         # Empty would start a new random session instead of the one asked for
         [[ -n "$2" ]] || die '--session requires a value'
         export DOCKERSAND_SESSION="$2"
+        shift 2
+        ;;
+      --cp)
+        need_value "$@"
+        [[ -n "$2" ]] || die '--cp requires a value'
+        copy_paths+=("$2")
         shift 2
         ;;
       --git-strategy) need_value "$@"; export DOCKERSAND_GIT_STRATEGY="$2"; shift 2 ;;
@@ -645,6 +761,10 @@ run_app() {
     mount)
       if [[ -n "${DOCKERSAND_SESSION:-}" ]]; then
         die "DOCKERSAND_SESSION needs DOCKERSAND_GIT_STRATEGY=clone"
+      fi
+      # Mount mode shares the checkout itself, so it can't keep a copy apart
+      if (( ${#copy_paths[@]} )); then
+        die "--cp needs DOCKERSAND_GIT_STRATEGY=clone"
       fi
       ;;
     *) die "unknown DOCKERSAND_GIT_STRATEGY: $DOCKERSAND_GIT_STRATEGY (expected mount or clone)" ;;
