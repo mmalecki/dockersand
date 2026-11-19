@@ -31,6 +31,9 @@ jobs:
       - name: Test clone remote destinations
         run: bash tests/remotes.sh
 
+      - name: Test copying files into clones
+        run: bash tests/copy.sh
+
       - name: Test D-Bus forwarding
         run: bash tests/dbus.sh
 
