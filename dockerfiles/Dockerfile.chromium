@@ -12,5 +12,6 @@ USER work:work
 RUN mkdir -p /home/work/.config/cd4a \
  && printf '%s\n' '{"executablePath": "/usr/bin/chromium", "headless": true, "performanceCrux": false}' \
     > /home/work/.config/cd4a/config.json
+RUN npm install -g chrome-devtools-mcp
 # Developer privacy: never send chrome-devtools-mcp usage statistics
 ENV CHROME_DEVTOOLS_MCP_NO_USAGE_STATISTICS=1
