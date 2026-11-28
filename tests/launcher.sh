@@ -426,7 +426,7 @@ test_dind_switch_matches_environment() {
 
 test_switches_after_app_pass_through() {
   local app_args i
-  app_args=(--dind --dbus --gcloud --gh --ssh --egress --ephemeral-tmp --session 'two words' --git-strategy mount --entrypoint /bin/bash --host-gateway '' -p 80 -e FOO=bar)
+  app_args=(--dind --dbus --gcloud --gh --ssh --egress --ephemeral-tmp --session 'two words' --git-strategy mount --entrypoint /bin/bash --host-gateway '' -p 80 -e FOO=bar --cp .env)
   run_sandbox test "${app_args[@]}"
   assert_arg --runtime=runsc
   assert_no_arg DOCKERSAND_DIND=1

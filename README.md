@@ -64,6 +64,7 @@ and `0`, `false` or nothing for off; any other value is an error, rather than a 
 | `--ssh` | `DOCKERSAND_SSH=1` | Forward the SSH agent and known_hosts |
 | `--egress` | `DOCKERSAND_EGRESS=1` | Enable allowlisted egress |
 | `--ephemeral-tmp` | `DOCKERSAND_EPHEMERAL_TMP=1` | Don't keep a clone session's `/tmp` |
+| `--cp <path>` | — | Copy a file from the checkout into a clone session |
 
 For example: `dockersand run --session feature --ssh --gh codex`.
 
@@ -144,6 +145,26 @@ Use `--git-strategy mount` to work directly in the checkout, including its `.git
 plant hooks or config (e.g. `core.fsmonitor`) that your host git later executes. It also doesn't work from
 linked git worktrees, whose `.git` points outside the mount. Outside a git repository the default is to mount
 the directory (equivalent to `mount`).
+
+### Copying files into a clone session
+
+A clone holds only committed files, so untracked ones a project needs, such as `.env`, aren't in it. `--cp` copies one
+in, at the same path in the clone, and repeats for more:
+
+    dockersand run --cp .env --cp config/master.key <app> [args...]
+
+The file must be in the checkout, and `--cp` needs the clone strategy: mount mode shares the checkout itself. A link
+to a file is followed, so the sandbox gets the target's content under the link's name. Missing directories are
+created. The copy keeps the file's permissions and modification time, and stays in the session directory until you
+delete the session.
+
+Each launch with `--cp` copies the file again, replacing the session's copy, and any changes the sandbox made to it.
+Resume the session without `--cp` to keep them.
+
+The clone gets the repository's `.gitignore` files, but not `.git/info/exclude` or `core.excludesFile`. So that the
+sandbox doesn't commit, and push, a file you keep out of Git, `--cp` refuses an untracked file unless the repository's
+`.gitignore` files ignore it, and the clone has the same ones. A new clone has those you committed, so commit changes
+to them first. A tracked file is copied over the clone's, where it shows as modified.
 
 ### Listing sessions
 
@@ -346,9 +367,11 @@ may be enlightening on the build-vs-buy conundrum.
 
 Run `bash tests/launcher.sh` to check Git identity resolution and runtime selection without a Docker daemon.
 Run `bash tests/remotes.sh` to check clone fetch/push URLs, host URL rewrites, and pushes to multiple local destinations.
+Run `bash tests/copy.sh` to check that `--cp` copies files into clones, refuses ones the sandbox could commit, and
+doesn't follow links the sandbox planted, using a mock Docker command.
 Run `bash tests/sessions.sh` to check session discovery, live status, and Docker failure handling using a mock Docker command.
 Run `bash tests/live.sh` to launch real sandboxes from a test image it builds from `tests/Dockerfile`: it checks what
-the mount and clone strategies expose, sessions, published ports, SSH forwarding, D-Bus forwarding and nested Docker
+the mount and clone strategies expose, files copied with `--cp`, sessions, published ports, SSH forwarding, D-Bus forwarding and nested Docker
 (with the two tests below), and that the sandbox runs on gVisor. It needs Docker with the `runsc` runtime, configured
 with `--host-uds=open`, unprivileged user namespaces, and the host's `ssh-agent`, `ssh-keygen`, `curl`, `dbus-daemon`
 and `dbus-send`.
